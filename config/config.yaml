@@ -31,6 +31,13 @@ scraping:
   recommended_delay: 3.0
   max_delay: 5.0
 
+  # Scraping modes (Phase 2.1) — tap the tagged posts feed for community content
+  scrape_modes:
+    official_gyms: "both"       # their own posts + posts where community tagged them
+    contributors: "posts"       # just their own posts
+    default: "tagged"           # new accounts default to tagged feed
+  # modes: "posts" (account's own) | "tagged" (posts tagged by others) | "both"
+
   # Keyframe extraction from Reels (Phase 2)
   keyframe_extraction:
     enabled: true         # set false to skip video processing

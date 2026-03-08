@@ -9,6 +9,8 @@ Sources:
 Usage:
     python scrape.py                             # scrape ทุก source
     python scrape.py --gym alpine                # scrape เฉพาะ gym นั้น
+    python scrape.py --gym alpine --mode tagged  # scrape only community-tagged posts
+    python scrape.py --mode both                 # own posts + community tagged (all)
     python scrape.py --contributors-only         # scrape เฉพาะ contributor accounts
     python scrape.py --add-contributor username  # เพิ่ม contributor แล้ว scrape เลย
     python scrape.py --list-contributors         # ดูรายชื่อ contributors ทั้งหมด
@@ -19,6 +21,7 @@ import instaloader
 import argparse
 import json
 import time
+import itertools
 from pathlib import Path
 
 from src.config import load_config, get_path, get_gym_names, get_instagram_handle, get_nested
@@ -159,13 +162,14 @@ def get_loader():
 
 
 def scrape_account(username, source_type, source_key,
-                   limit=100, delay=2.0, loader=None):
+                   limit=100, delay=2.0, loader=None, scrape_mode="posts"):
     """
     Scrape รูปจาก 1 Instagram account
     บันทึกลง data/images/{source_type}/{source_key}/
 
     source_type: "official" | "contributor"
     source_key:  gym key (เช่น "alpine") หรือ username (สำหรับ contributor)
+    scrape_mode: "posts" (account's own) | "tagged" (posts tagged by others) | "both"
     """
     base_dir = get_path("data_dir")
     out_dir = base_dir / source_type / source_key
@@ -198,7 +202,18 @@ def scrape_account(username, source_type, source_key,
         profile = instaloader.Profile.from_username(L.context, username)
         log.info(f"   Found: {profile.full_name} | {profile.mediacount} posts")
 
-        for post in profile.get_posts():
+        # Build post iterator based on scrape_mode (Phase 2.1)
+        if scrape_mode == "posts":
+            posts_iter = profile.get_posts()
+        elif scrape_mode == "tagged":
+            posts_iter = profile.get_tagged_posts()
+        elif scrape_mode == "both":
+            posts_iter = itertools.chain(profile.get_posts(), profile.get_tagged_posts())
+        else:
+            log.warning(f"Unknown scrape_mode: {scrape_mode}, defaulting to 'posts'")
+            posts_iter = profile.get_posts()
+
+        for post in posts_iter:
             if count >= limit:
                 break
 
@@ -215,6 +230,8 @@ def scrape_account(username, source_type, source_key,
                 "date":        post.date_utc.isoformat(),
                 "likes":       post.likes,
                 "is_relevant": is_relevant,
+                "scrape_mode": scrape_mode,
+                "tagger_username": post.owner_username if scrape_mode in ("tagged", "both") else None,
             }
 
             is_video = post.is_video
@@ -367,6 +384,8 @@ def main():
                         help=f"จำนวนรูปสูงสุดต่อ account (default: {default_limit})")
     parser.add_argument("--delay", type=float, default=default_delay,
                         help=f"delay ระหว่าง request วินาที (default: {default_delay})")
+    parser.add_argument("--mode", choices=["posts", "tagged", "both"], default=None,
+                        help="scrape mode: 'posts' (own), 'tagged' (community), 'both' (default: from config)")
 
     args = parser.parse_args()
 
@@ -381,8 +400,11 @@ def main():
         if args.no_scrape:
             return
         username = args.add_contributor.lstrip("@")
+        cfg = load_config()
+        scrape_modes = cfg.get("scraping", {}).get("scrape_modes", {})
+        mode = args.mode or scrape_modes.get("contributors", "posts")
         new_meta = scrape_account(username, "contributor", username,
-                                  limit=args.limit, delay=args.delay)
+                                  limit=args.limit, delay=args.delay, scrape_mode=mode)
         merge_and_save(new_meta)
         return
 
@@ -429,11 +451,24 @@ def main():
     loader       = get_loader()
     all_metadata, existing_files = load_index()
     new_this_run = []
+    scrape_modes = cfg.get("scraping", {}).get("scrape_modes", {})
 
     for username, source_type, source_key in tasks:
+        # Determine scrape mode (Phase 2.1)
+        if args.mode:
+            mode = args.mode
+        else:
+            if source_type == "official":
+                mode = scrape_modes.get("official_gyms", "both")
+            elif source_type == "contributor":
+                mode = scrape_modes.get("contributors", "posts")
+            else:
+                mode = scrape_modes.get("default", "tagged")
+
         new_meta = scrape_account(
             username, source_type, source_key,
             limit=args.limit, delay=args.delay, loader=loader,
+            scrape_mode=mode,
         )
         for m in new_meta:
             if m["filename"] not in existing_files:
