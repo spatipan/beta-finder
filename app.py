@@ -13,14 +13,15 @@ Theme: Dark wall (climbing gym wall aesthetic)
 import streamlit as st
 import json
 import os
+import uuid
 import tempfile
 from pathlib import Path
 from PIL import Image
-import numpy as np
 
 # Import from src modules
 from src.config import load_config, get_gym_names, get_nested
 from src.search import search
+from src.feedback import save_feedback, get_feedback_stats
 from src.logger import setup_logger
 
 log = setup_logger(__name__)
@@ -113,6 +114,19 @@ a:hover {
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Session State
+# ─────────────────────────────────────────────────────────────────────────────
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+if "last_results" not in st.session_state:
+    st.session_state.last_results = []
+if "last_query_path" not in st.session_state:
+    st.session_state.last_query_path = None
+if "last_model" not in st.session_state:
+    st.session_state.last_model = None
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Helper Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -197,6 +211,20 @@ with st.sidebar:
     """)
 
     st.markdown("---")
+    st.markdown("### 🎯 Feedback Progress")
+    fb_stats = get_feedback_stats()
+    st.caption(f"Helping improve AI accuracy — goal: {fb_stats['goal']} labeled pairs")
+    st.progress(
+        fb_stats["pct_complete"] / 100,
+        text=f"{fb_stats['total']} / {fb_stats['goal']} pairs ({fb_stats['pct_complete']}%)"
+    )
+    fb_col1, fb_col2 = st.columns(2)
+    with fb_col1:
+        st.metric("👍 Relevant", fb_stats["positive"])
+    with fb_col2:
+        st.metric("👎 Not this", fb_stats["negative"])
+
+    st.markdown("---")
     st.markdown("### 📝 About")
     st.caption("""
     **BetaFinder CNX**
@@ -277,7 +305,7 @@ if uploaded_file:
     # Search button
     if st.button("🔍 Find Beta", key="search_btn", use_container_width=True):
 
-        # Save uploaded file temporarily
+        # Save uploaded file temporarily (keep path for feedback attribution)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
@@ -292,73 +320,98 @@ if uploaded_file:
                     pretrained="openai"
                 )
 
-            if results:
-                st.success(f"✅ Found {len(results)} matching betas!")
-                st.markdown("---")
+            # Store in session state so feedback buttons work across reruns
+            st.session_state.last_results = results
+            st.session_state.last_query_path = tmp_path
+            st.session_state.last_model = selected_model
 
-                # Results header with stats
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("🏆 Best Match", f"{results[0]['score']:.3f}")
-                with col2:
-                    avg_score = sum(r['score'] for r in results) / len(results)
-                    st.metric("📊 Avg Score", f"{avg_score:.3f}")
-                with col3:
-                    st.metric("📸 Results", len(results))
-
-                st.markdown("---")
-                st.markdown("### 🎯 Results")
-
-                # Results display
-                for i, result in enumerate(results, 1):
-                    with st.container():
-                        col1, col2 = st.columns([3, 1])
-
-                        with col1:
-                            # Rank and gym
-                            gym_emoji = {
-                                "alpine": "🟢",
-                                "mainwall": "🔵",
-                                "progression": "🟠",
-                                "?": "⚪"
-                            }
-                            gym_label = result['gym'].upper()
-                            emoji = gym_emoji.get(result['gym'].lower(), "⚪")
-
-                            st.markdown(
-                                f"**#{i} {emoji} {gym_label}**",
-                                help=result['gym']
-                            )
-
-                            # Score bar
-                            st.progress(result['score'], text=f"Similarity: {result['score']:.1%}")
-
-                            # Caption and metadata
-                            if result['caption']:
-                                st.markdown(f"*{result['caption']}*")
-                            else:
-                                st.caption("(No caption)")
-
-                            # Metadata
-                            meta_col1, meta_col2 = st.columns(2)
-                            with meta_col1:
-                                st.caption(f"📅 {result['date']}")
-                            with meta_col2:
-                                st.caption(f"👤 {result['filename'].split('/')[-2]}")
-
-                        with col2:
-                            st.markdown(f"**Score:** {result['score']:.4f}")
-                            if result['url']:
-                                st.markdown(f"[🔗 IG](https://www.instagram.com)")
-
-                        st.divider()
-            else:
-                st.warning("❌ No matching betas found. Try another photo!")
+        except Exception as e:
+            st.error(f"Search failed: {e}")
+            st.session_state.last_results = []
 
         finally:
-            # Clean up temp file
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            # Don't delete tmp_path here — needed for feedback recording
+            pass
+
+    # Show results (from session state so they persist after 👍/👎 clicks)
+    results = st.session_state.last_results
+    if results:
+        st.success(f"✅ Found {len(results)} matching betas!")
+        st.markdown("---")
+
+        # Results header with stats
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🏆 Best Match", f"{results[0]['score']:.3f}")
+        with col2:
+            avg_score = sum(r['score'] for r in results) / len(results)
+            st.metric("📊 Avg Score", f"{avg_score:.3f}")
+        with col3:
+            st.metric("📸 Results", len(results))
+
+        st.markdown("---")
+        st.markdown("### 🎯 Results")
+
+        gym_emoji = {"alpine": "🟢", "mainwall": "🔵", "progression": "🟠", "?": "⚪"}
+
+        for i, result in enumerate(results, 1):
+            with st.container():
+                col1, col2 = st.columns([1, 2])
+
+                with col1:
+                    img_path = Path(result['filename'])
+                    if img_path.exists():
+                        st.image(str(img_path), width="stretch")
+                    else:
+                        st.caption("🖼️ Image not found")
+
+                with col2:
+                    gym_label = result['gym'].upper()
+                    emoji = gym_emoji.get(result['gym'].lower(), "⚪")
+                    st.markdown(f"**#{i} {emoji} {gym_label}**")
+
+                    st.progress(result['score'], text=f"Similarity: {result['score']:.1%}")
+
+                    if result['caption']:
+                        st.markdown(f"*{result['caption']}*")
+                    else:
+                        st.caption("(No caption)")
+
+                    meta_col1, meta_col2 = st.columns(2)
+                    with meta_col1:
+                        st.caption(f"📅 {result['date']}")
+                    with meta_col2:
+                        st.caption(f"👤 {result['filename'].split('/')[-2]}")
+
+                    if result['url']:
+                        st.markdown(f"[🔗 View on Instagram]({result['url']})")
+
+                    # Feedback buttons
+                    st.caption("Was this the same route?")
+                    fb_col1, fb_col2 = st.columns(2)
+                    with fb_col1:
+                        if st.button("👍 Yes!", key=f"pos_{i}_{result['filename']}"):
+                            save_feedback(
+                                result, "positive",
+                                st.session_state.session_id,
+                                st.session_state.last_query_path or "",
+                                model_used=st.session_state.last_model or selected_model,
+                            )
+                            st.toast("Thanks! Marked as relevant 🎯")
+                    with fb_col2:
+                        if st.button("👎 No", key=f"neg_{i}_{result['filename']}"):
+                            save_feedback(
+                                result, "negative",
+                                st.session_state.session_id,
+                                st.session_state.last_query_path or "",
+                                model_used=st.session_state.last_model or selected_model,
+                            )
+                            st.toast("Thanks! Noted 📝")
+
+            st.divider()
+
+    if not results and not st.session_state.last_results:
+        st.warning("❌ No matching betas found. Try another photo!")
 
 else:
     # Placeholder when no image uploaded

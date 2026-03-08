@@ -31,9 +31,16 @@ scraping:
   recommended_delay: 3.0
   max_delay: 5.0
 
+  # Keyframe extraction from Reels (Phase 2)
+  keyframe_extraction:
+    enabled: true         # set false to skip video processing
+    n_frames: 4           # evenly-spaced frames per Reel
+    skip_pct: 0.05        # skip first/last 5% (avoid intros/outros)
+    delete_video: true    # delete .mp4 after extraction
+
   # Instaloader configuration
   instaloader:
-    download_videos: false
+    download_videos: true   # enable for keyframe extraction
     download_video_thumbnails: true
     download_geotags: false
     download_comments: false
@@ -115,6 +122,20 @@ streamlit:
     secondary: "#00d4ff"  # cool volume cyan
     background: "#1a1a1a"  # gym wall dark
     text: "#ffffff"  # white text
+
+# Snowball account discovery (Phase 2)
+discovery:
+  enabled: true
+  max_depth: 2             # BFS hops from seed accounts
+  min_relevance_score: 0.3 # min keyword ratio to suggest account
+  graph_file: "data/graph.json"
+  relevance_keywords:
+    - climb
+    - boulder
+    - beta
+    - route
+    - ปีน
+    - บอลเดอร์
 
 # Update/cron configuration
 update:

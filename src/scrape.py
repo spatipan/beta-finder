@@ -26,6 +26,55 @@ from src.logger import setup_logger
 
 log = setup_logger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Video keyframe extraction (Phase 2)
+# ---------------------------------------------------------------------------
+
+def extract_keyframes(video_path: Path, n_frames: int = 4, skip_pct: float = 0.05) -> list:
+    """
+    Extract N evenly-spaced keyframes from a video file.
+
+    Skips the first and last skip_pct of the video to avoid intros/outros.
+    Returns list of Paths for saved JPEG keyframes.
+    Deletes the source video if configured.
+    """
+    try:
+        import cv2
+    except ImportError:
+        log.warning("opencv-python not installed — skipping keyframe extraction")
+        return []
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        log.warning(f"Cannot open video: {video_path}")
+        return []
+
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total < n_frames:
+        cap.release()
+        return []
+
+    start = int(total * skip_pct)
+    end = int(total * (1 - skip_pct))
+    positions = [start + i * (end - start) // max(n_frames - 1, 1) for i in range(n_frames)]
+
+    frames = []
+    stem = video_path.stem  # e.g. "ABC123_0"
+    for i, pos in enumerate(positions):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        out_path = video_path.parent / f"{stem}_kf{i}.jpg"
+        cv2.imwrite(str(out_path), frame)
+        frames.append(out_path)
+        log.debug(f"   Keyframe {i}: {out_path.name}")
+
+    cap.release()
+    log.info(f"   Extracted {len(frames)} keyframes from {video_path.name}")
+    return frames
+
 # ---------------------------------------------------------------------------
 # Contributors management
 # ---------------------------------------------------------------------------
@@ -138,6 +187,13 @@ def scrape_account(username, source_type, source_key,
         keywords_config.get("grades", [])
     )
 
+    # Load keyframe extraction config
+    kf_cfg = cfg.get("scraping", {}).get("keyframe_extraction", {})
+    kf_enabled = kf_cfg.get("enabled", False)
+    kf_n_frames = kf_cfg.get("n_frames", 4)
+    kf_skip_pct = kf_cfg.get("skip_pct", 0.05)
+    kf_delete_video = kf_cfg.get("delete_video", True)
+
     try:
         profile = instaloader.Profile.from_username(L.context, username)
         log.info(f"   Found: {profile.full_name} | {profile.mediacount} posts")
@@ -148,38 +204,77 @@ def scrape_account(username, source_type, source_key,
 
             caption = (post.caption or "").lower()
             is_relevant = any(kw in caption for kw in BETA_KEYWORDS)
+            base_meta = {
+                "source_type": source_type,
+                "source_key":  source_key,
+                "gym":         source_key if source_type == "official" else None,
+                "username":    username,
+                "shortcode":   post.shortcode,
+                "url":         f"https://www.instagram.com/p/{post.shortcode}/",
+                "caption":     post.caption or "",
+                "date":        post.date_utc.isoformat(),
+                "likes":       post.likes,
+                "is_relevant": is_relevant,
+            }
 
-            nodes = list(post.get_sidecar_nodes()) if post.typename == "GraphSidecar" else [post]
+            is_video = post.is_video
 
-            for idx, node in enumerate(nodes):
-                filename = f"{post.shortcode}_{idx}.jpg"
-                filepath = out_dir / filename
-
-                if not filepath.exists():
+            if is_video and kf_enabled:
+                # Download video then extract keyframes
+                video_path = out_dir / f"{post.shortcode}_0.mp4"
+                if not video_path.exists():
                     try:
-                        node_url = getattr(node, 'display_url', getattr(node, 'url', None))
-                        L.download_pic(str(filepath), node_url, post.date_utc)
-                        log.info(f"   ✅ {filename}")
+                        L.download_post(post, target=str(out_dir))
+                        # instaloader saves as {shortcode}.mp4 — find it
+                        mp4_files = list(out_dir.glob(f"{post.shortcode}*.mp4"))
+                        if mp4_files:
+                            video_path = mp4_files[0]
                     except Exception as e:
-                        log.warning(f"   ⚠️  Failed {filename}: {e}")
+                        log.warning(f"   ⚠️  Video download failed {post.shortcode}: {e}")
+                        time.sleep(delay)
                         continue
-                else:
-                    log.debug(f"   Skip (exists): {filename}")
 
-                metadata.append({
-                    "source_type":  source_type,
-                    "source_key":   source_key,
-                    "gym":          source_key if source_type == "official" else None,
-                    "username":     username,
-                    "shortcode":    post.shortcode,
-                    "filename":     str(filepath),
-                    "url":          f"https://www.instagram.com/p/{post.shortcode}/",
-                    "caption":      post.caption or "",
-                    "date":         post.date_utc.isoformat(),
-                    "likes":        post.likes,
-                    "is_relevant":  is_relevant,
-                })
-                count += 1
+                if video_path.exists():
+                    keyframes = extract_keyframes(video_path, kf_n_frames, kf_skip_pct)
+                    if kf_delete_video:
+                        video_path.unlink(missing_ok=True)
+
+                    for kf_idx, kf_path in enumerate(keyframes):
+                        metadata.append({
+                            **base_meta,
+                            "filename":       str(kf_path),
+                            "media_type":     "keyframe",
+                            "frame_index":    kf_idx,
+                            "video_shortcode": post.shortcode,
+                        })
+                        count += 1
+            else:
+                # Image post (or video with keyframes disabled — fall back to image)
+                nodes = list(post.get_sidecar_nodes()) if post.typename == "GraphSidecar" else [post]
+
+                for idx, node in enumerate(nodes):
+                    filename = f"{post.shortcode}_{idx}.jpg"
+                    filepath = out_dir / filename
+
+                    if not filepath.exists():
+                        try:
+                            node_url = getattr(node, 'display_url', getattr(node, 'url', None))
+                            L.download_pic(str(filepath), node_url, post.date_utc)
+                            log.info(f"   ✅ {filename}")
+                        except Exception as e:
+                            log.warning(f"   ⚠️  Failed {filename}: {e}")
+                            continue
+                    else:
+                        log.debug(f"   Skip (exists): {filename}")
+
+                    metadata.append({
+                        **base_meta,
+                        "filename":   str(filepath),
+                        "media_type": "image",
+                        "frame_index": None,
+                        "video_shortcode": None,
+                    })
+                    count += 1
 
             time.sleep(delay)
 
