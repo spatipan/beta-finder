@@ -1,6 +1,6 @@
-# 🧗 BetaScan CNX
+# 🧗 BetaFinder CNX
 
-> Scan the wall. Find your beta. — สำหรับยิมปีนผาเชียงใหม่
+> Find your beta on the wall. — สำหรับยิมปีนผาเชียงใหม่
 
 ระบบค้นหา beta (คลิปคนปีนเส้นเดียวกัน) จากรูปผนังที่ถ่าย
 โดยใช้ CLIP image embeddings + FAISS similarity search
@@ -23,7 +23,7 @@
 
 ```bash
 # 1. Clone / ดาวน์โหลดโฟลเดอร์นี้
-cd betascan-cnx
+cd betafinder-cnx
 
 # 2. สร้าง virtual environment
 python -m venv .venv
@@ -130,7 +130,7 @@ python search.py my_wall_photo.jpg --json
 **ตัวอย่าง output:**
 ```
 ============================================================
-  🧗 BetaScan CNX — Top 5 Results
+  🧗 BetaFinder CNX — Top 5 Results
 ============================================================
 
   #1  [MAINWALL]  score=0.9234
@@ -165,7 +165,7 @@ python search.py my_wall_photo.jpg --json
 ## 📁 โครงสร้างไฟล์
 
 ```
-betascan-cnx/
+betafinder-cnx/
 ├── scrape.py          # Step 1: ดึงรูปจาก Instagram
 ├── embed.py           # Step 2: สร้าง CLIP embeddings
 ├── search.py          # Step 3: ค้นหา
@@ -209,7 +209,7 @@ betascan-cnx/
 
 ## 🗺️ Next Steps
 
-- [ ] Streamlit web UI (แบบ BetaScan ต้นฉบับ)
+- [ ] Streamlit web UI
 - [ ] Auto-update cron job (scrape ทุก 6-12 ชั่วโมง)
 - [ ] Web form ให้ community submit contributor account เอง
 - [ ] Filter รูปที่มีคนปีน vs รูปผนังเปล่า (classifier)
@@ -219,5 +219,4 @@ betascan-cnx/
 
 ---
 
-*Built for Chiang Mai climbing community by @patipan_poty @climb.with.poom🇹🇭*  
-*Inspired by BetaScan by @thangman22*
+*Built for Chiang Mai climbing community by @patipan_poty @climb.with.poom🇹🇭*

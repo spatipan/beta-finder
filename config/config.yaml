@@ -1,0 +1,124 @@
+# BetaFinder CNX — Central Configuration File
+# All paths are relative to project root
+# Last updated: 2026-03-08
+
+gyms:
+  alpine:
+    name: "Alpine Outpost"
+    instagram: "the_alpine_outpost"
+    color: "#4CAF50"  # green
+  mainwall:
+    name: "Main Wall CNX"
+    instagram: "mainwallcnx"
+    color: "#2196F3"  # blue
+  progression:
+    name: "Progression Vertical"
+    instagram: "progressionvertical"
+    color: "#FF9800"  # orange
+
+paths:
+  data_dir: "data/images"
+  index_file: "data/gym_index.json"
+  contributors_file: "data/contributors.json"
+  embeddings_file: "data/embeddings.pkl"
+  faiss_file: "data/faiss.index"
+  faiss_paths_file: "data/faiss.paths.json"
+
+scraping:
+  # Default limits and delays
+  default_limit: 100
+  default_delay: 2.0
+  recommended_delay: 3.0
+  max_delay: 5.0
+
+  # Instaloader configuration
+  instaloader:
+    download_videos: false
+    download_video_thumbnails: true
+    download_geotags: false
+    download_comments: false
+    save_metadata: true
+    compress_json: false
+    quiet: true
+
+  # Keywords for filtering relevant posts
+  beta_keywords:
+    english:
+      - climb
+      - boulder
+      - route
+      - beta
+      - wall
+      - grade
+    thai:
+      - ปีน
+      - บอลเดอร์
+      - เส้น
+    grades:
+      - v0
+      - v1
+      - v2
+      - v3
+      - v4
+      - v5
+      - v6
+      - v7
+      - v8
+      - v9
+      - v10
+
+# Image embedding configuration
+embedding:
+  model_name: "ViT-B-32"  # fast, ~10s/image on CPU
+  # alternative: "ViT-L-14" (more accurate, ~30s/image on CPU)
+  pretrained: "openai"
+  default_batch_size: 16
+  fallback_image_size: [224, 224]
+  normalize: true  # L2 normalize before indexing
+
+# FAISS vector index configuration
+faiss:
+  index_type: "IndexFlatIP"  # flat inner product (cosine similarity with L2 normalized)
+  dimension: 512  # ViT-B-32 output dimension
+  # note: ViT-L-14 also outputs 768-dim
+
+# Search/retrieval configuration
+search:
+  default_top_k: 5  # default number of results
+  max_top_k: 20  # maximum allowed
+  oversample_factor: 3  # fetch 3x results before filtering by gym
+  default_model: "ViT-B-32"
+  default_pretrained: "openai"
+  caption_max_length: 100  # truncate captions to this length
+
+# Wall filter configuration (for future filter.py)
+wall_filter:
+  enabled: false  # set to true when filter.py is ready
+  model: "ViT-B-32"  # same CLIP model for consistency
+  threshold: 0.5  # classification threshold (0-1)
+  exclude_non_walls: true  # exclude images below threshold from index
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(message)s"
+
+# Streamlit UI configuration (for future app.py)
+streamlit:
+  theme: "dark"
+  title: "BetaFinder CNX"
+  icon: "🧗"
+  layout: "wide"
+  sidebar_state: "expanded"
+  colors:
+    primary: "#ff6b35"  # warm hold orange
+    secondary: "#00d4ff"  # cool volume cyan
+    background: "#1a1a1a"  # gym wall dark
+    text: "#ffffff"  # white text
+
+# Update/cron configuration
+update:
+  enabled: false
+  schedule: "0 2 * * *"  # 2 AM daily
+  contributors_only: true  # only update contributor accounts
+  delay: 3.0  # delay between requests
