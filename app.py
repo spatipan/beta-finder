@@ -263,7 +263,7 @@ if uploaded_file:
     with col1:
         # Display uploaded image
         image = Image.open(uploaded_file)
-        st.image(image, use_column_width=True, caption="📷 Your wall photo")
+        st.image(image, width="stretch", caption="📷 Your wall photo")
 
     with col2:
         st.markdown("**Photo Info:**")

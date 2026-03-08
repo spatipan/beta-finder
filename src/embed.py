@@ -128,7 +128,7 @@ def main():
 
     # Get paths from config
     index_file = get_path("index_file")
-    embed_file = get_path("embed_file")
+    embed_file = get_path("embeddings_file")
     faiss_file = get_path("faiss_file")
 
     # โหลด metadata index

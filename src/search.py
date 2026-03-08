@@ -31,7 +31,6 @@ def load_index():
     import faiss
 
     index_file = get_path("index_file")
-    embed_file = get_path("embed_file")
     faiss_file = get_path("faiss_file")
     paths_file = faiss_file.with_suffix(".paths.json")
 
