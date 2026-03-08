@@ -110,7 +110,7 @@ def build_faiss_index(embeddings: np.ndarray):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="BetaScan CNX - Embedder")
+    parser = argparse.ArgumentParser(description="BetaFinder CNX - Embedder")
     parser.add_argument("--model",     default="ViT-B-32")
     parser.add_argument("--pretrained", default="openai")
     parser.add_argument("--batch",     type=int, default=16)

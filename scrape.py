@@ -232,7 +232,7 @@ def merge_and_save(new_meta: list):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="BetaScan CNX - Instagram Scraper")
+    parser = argparse.ArgumentParser(description="BetaFinder CNX - Instagram Scraper")
 
     # Source selection (mutually exclusive)
     source_group = parser.add_mutually_exclusive_group()

@@ -120,7 +120,7 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
 def print_results(results: list[dict], open_browser: bool = False):
     """แสดงผล + เปิดเบราว์เซอร์ถ้าต้องการ"""
     print(f"\n{'='*60}")
-    print(f"  🧗 BetaScan CNX — Top {len(results)} Results")
+    print(f"  🧗 BetaFinder CNX — Top {len(results)} Results")
     print(f"{'='*60}")
 
     for r in results:
@@ -136,7 +136,7 @@ def print_results(results: list[dict], open_browser: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BetaScan CNX - Search")
+    parser = argparse.ArgumentParser(description="BetaFinder CNX - Search")
     parser.add_argument("image",       type=Path, help="รูปผนังที่ต้องการค้นหา")
     parser.add_argument("--top",       type=int,  default=5,    help="จำนวน results")
     parser.add_argument("--gym",       choices=["alpine", "mainwall", "progression"],
