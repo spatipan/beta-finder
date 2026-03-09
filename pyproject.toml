@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "betafinder-cnx"
+version = "0.2.0"
+description = "A climbing beta (route) finder using CLIP embeddings + FAISS similarity search"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "BetaFinder Team"}]
+keywords = ["climbing", "beta", "similarity-search", "CLIP", "embeddings"]
+
+dependencies = [
+    "instaloader>=4.10",
+    "open-clip-torch>=2.24",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "Pillow>=10.0",
+    "numpy>=1.24",
+    "faiss-cpu>=1.7",
+    "tqdm>=4.65",
+    "PyYAML>=6.0",
+    "streamlit>=1.28",
+    "opencv-python>=4.8",
+    "networkx>=3.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "pillow-heif>=0.16",
+    "kornia-moons>=0.2.0",  # SuperPoint + SuperGlue (GPU-based local features)
+]
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+]
+
+# GPU-accelerated embeddings (optional, for SuperPoint)
+gpu = [
+    "torch[cuda]>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/betafinder-cnx"
+Documentation = "https://github.com/yourusername/betafinder-cnx#readme"
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "W"]
+ignore = ["E501"]  # Line too long (handled by black)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

@@ -30,14 +30,26 @@ BetaFinder CNX helps climbers discover new routes and bouldering problems by sea
 
 ### 1. Install Dependencies
 
+**Using uv** (recommended, faster and more reliable):
 ```bash
-# Python dependencies
-pip install -r requirements.txt
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install Python dependencies and create virtual environment
+uv sync
 
 # Node dependencies (for React dev server)
 npm install
 
 # Set Instagram credentials (optional, to avoid rate limits)
+export INSTALOADER_USER="your_username"
+export INSTALOADER_PASS="your_password"
+```
+
+**Or using pip** (traditional approach):
+```bash
+pip install -r requirements.txt
+npm install
 export INSTALOADER_USER="your_username"
 export INSTALOADER_PASS="your_password"
 ```
@@ -164,7 +176,9 @@ beta-finder-cnx/
 │   ├── faiss.paths.json    # Image path list for index lookup
 │   └── faiss.model.json    # Model metadata (auto-detected by search.py)
 │
-├── requirements.txt    # Python dependencies
+├── pyproject.toml      # Project metadata and dependencies (uv-managed)
+├── uv.lock             # Dependency lock file (uv)
+├── requirements.txt    # Alternative: Python dependencies (pip)
 ├── package.json        # Node dependencies
 ├── vite.config.js      # Vite configuration
 ├── CLI_GUIDE.md        # Complete CLI command reference
@@ -364,6 +378,31 @@ python search.py wall_photo.jpg --model ViT-L-14 --pretrained openai
 
 ## ⚙️ Configuration
 
+### Dependency Management
+
+This project uses **uv** for fast, reliable dependency management:
+
+```bash
+# Install dependencies and create venv
+uv sync
+
+# Run scripts in venv context
+uv run python scrape.py
+uv run python embed.py
+uv run python search.py photo.jpg
+
+# Add a new dependency
+uv add package-name
+
+# Update all dependencies
+uv update
+```
+
+See `pyproject.toml` for:
+- Project metadata and all dependencies
+- Optional dependency groups (dev, gpu)
+- Development tools configuration
+
 See `config/config.yaml` for:
 - Gym Instagram handles
 - Scraping modes (official, contributors, tagged posts)
@@ -413,6 +452,14 @@ pip install kornia-moons
 ```bash
 # Reduce batch size (default: auto-detected)
 python embed.py --batch 8
+# Or with uv:
+uv run python embed.py --batch 8
+```
+
+**Dependencies out of sync:**
+```bash
+# Regenerate lock file and venv
+uv sync
 ```
 
 **Model mismatch between embed and search:**

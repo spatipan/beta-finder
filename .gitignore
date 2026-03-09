@@ -26,6 +26,8 @@ test.png
 
 # Build & Dependencies
 dist/
+build/
+*.egg-info/
 node_modules/
 .vite/
 
