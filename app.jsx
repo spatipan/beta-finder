@@ -874,32 +874,7 @@ export default function BetaFinder() {
                 </p>
               </div>
 
-              {/* Tech Stack (hidden for now — uncomment to show) */}
-              {/* <div className="su1" style={{
-                background: t.bgCard, borderRadius: 16,
-                border: `1.5px solid ${t.border}`, overflow: "hidden",
-                boxShadow: "0 1px 8px rgba(0,0,0,0.05)",
-              }}>
-                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${t.border}`, fontWeight: 700, fontSize: 13, color: t.textSub }}>
-                  Tech Stack
-                </div>
-                {[
-                  ["Embeddings", "CLIP ViT-B/32", t.teal],
-                  ["Search", "FAISS cosine similarity", t.green],
-                  ["Scraping", "instaloader · tagged feed", t.amber],
-                  ["Video", "OpenCV keyframe extraction", t.orange],
-                  ["Infra", "UM890 Pro + RTX 3060 eGPU", t.blue],
-                ].map(([k, v, c], i, arr) => (
-                  <div key={k} style={{
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                    padding: "10px 16px",
-                    borderBottom: i < arr.length - 1 ? `1px solid ${t.border}` : "none",
-                  }}>
-                    <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 600 }}>{k}</span>
-                    <span style={{ fontSize: 12, color: c, fontWeight: 600 }}>{v}</span>
-                  </div>
-                ))}
-              </div> */
+              {/* Tech Stack hidden — to show, create a separate component above this line */}
 
               <div className="su1" style={{ display: "flex", gap: 10 }}>
                 {[
