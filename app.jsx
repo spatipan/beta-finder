@@ -725,6 +725,7 @@ export default function BetaFinder() {
           {/* ══════════════ STATS ══════════════ */}
           {tab === "stats" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Top stats: Total beta + Contributors */}
               <div className="su" style={{
                 background: t.bgCard, borderRadius: 16,
                 border: `1.5px solid ${t.border}`, padding: "20px",
@@ -732,8 +733,7 @@ export default function BetaFinder() {
                 display: "flex", gap: 12,
               }}>
                 {[
-                  { val: stats?.total ?? "—", lbl: "Total images", c: t.orange },
-                  { val: stats?.walls ?? "—", lbl: "Wall images", c: t.amber },
+                  { val: stats?.total ?? "—", lbl: "Total beta", c: t.orange },
                   { val: stats?.contributors ?? "—", lbl: "Contributors", c: t.green },
                 ].map(s => (
                   <div key={s.lbl} style={{ flex: 1, textAlign: "center" }}>
@@ -745,6 +745,7 @@ export default function BetaFinder() {
                 ))}
               </div>
 
+              {/* By Gym breakdown (with unknown/unclassified) */}
               <div className="su1" style={{
                 background: t.bgCard, borderRadius: 16,
                 border: `1.5px solid ${t.border}`, overflow: "hidden",
@@ -754,30 +755,34 @@ export default function BetaFinder() {
                   By Gym
                 </div>
                 {[
-                  { key: "alpine", cnt: stats?.alpine ?? 0 },
-                  { key: "mainwall", cnt: stats?.mainwall ?? 0 },
-                  { key: "progression", cnt: stats?.progression ?? 0 },
-                ].map((item, i) => {
-                  const g = gymCfg(item.key);
-                  const total = stats?.walls || 1;
+                  { key: "alpine", cnt: stats?.gym_alpine ?? 0 },
+                  { key: "mainwall", cnt: stats?.gym_mainwall ?? 0 },
+                  { key: "progression", cnt: stats?.gym_progression ?? 0 },
+                  { key: "unknown", cnt: stats?.gym_unknown ?? 0 },
+                ].map((item, i, arr) => {
+                  const g = item.key === "unknown"
+                    ? { full: "Unclassified", gc: t => t.textMuted }
+                    : gymCfg(item.key);
+                  const color = g.gc(t);
+                  const total = stats?.total || 1;
                   const pct = Math.round((item.cnt / total) * 100);
                   return (
                     <div key={item.key} style={{
                       padding: "12px 16px",
-                      borderBottom: i < 2 ? `1px solid ${t.border}` : "none",
+                      borderBottom: i < arr.length - 1 ? `1px solid ${t.border}` : "none",
                     }}>
                       <div style={{
                         display: "flex", justifyContent: "space-between",
                         alignItems: "center", marginBottom: 6,
                       }}>
-                        <span style={{ fontWeight: 700, fontSize: 13, color: g.gc(t) }}>{g.full}</span>
+                        <span style={{ fontWeight: 700, fontSize: 13, color }}>{g.full}</span>
                         <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: t.text }}>
                           {item.cnt}
                         </span>
                       </div>
                       <div style={{ height: 6, background: t.bgSubtle, borderRadius: 3, overflow: "hidden" }}>
                         <div style={{
-                          width: `${pct}%`, height: "100%", background: g.gc(t),
+                          width: `${pct}%`, height: "100%", background: color,
                           borderRadius: 3, transition: "width 1s cubic-bezier(.4,0,.2,1)",
                         }} />
                       </div>
@@ -786,6 +791,7 @@ export default function BetaFinder() {
                 })}
               </div>
 
+              {/* By Source breakdown */}
               <div className="su2" style={{
                 background: t.bgCard, borderRadius: 16,
                 border: `1.5px solid ${t.border}`, padding: "16px",
@@ -794,24 +800,39 @@ export default function BetaFinder() {
                 <div style={{ fontWeight: 700, fontSize: 13, color: t.textSub, marginBottom: 12 }}>
                   By Source
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {[
-                    { lbl: "Tagged", pct: 58, c: t.teal },
-                    { lbl: "Official", pct: 24, c: t.amber },
-                    { lbl: "Contributor", pct: 18, c: t.green },
-                  ].map(s => (
-                    <div key={s.lbl} style={{
-                      flex: s.pct, background: s.c + "18",
-                      border: `1.5px solid ${s.c}33`,
-                      borderRadius: 10, padding: "10px 8px", textAlign: "center",
-                    }}>
-                      <div style={{ fontWeight: 900, fontSize: 18, color: s.c, lineHeight: 1 }}>{s.pct}%</div>
-                      <div style={{ fontSize: 10, color: s.c, fontWeight: 700, marginTop: 2, letterSpacing: "0.5px" }}>
-                        {s.lbl}
-                      </div>
+                {(() => {
+                  const total = stats?.total || 1;
+                  const sources = [
+                    { key: "tagged", cnt: stats?.source_tagged ?? 0, lbl: "Tagged", c: t.teal, e: "🏷️" },
+                    { key: "official", cnt: stats?.source_official ?? 0, lbl: "Official", c: t.amber, e: "🏟️" },
+                    { key: "contributor", cnt: stats?.source_contributor ?? 0, lbl: "Contributor", c: t.green, e: "👤" },
+                  ];
+                  return (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {sources.map(s => {
+                        const pct = total > 0 ? Math.round((s.cnt / total) * 100) : 0;
+                        return (
+                          <div key={s.key} style={{
+                            flex: s.cnt, minWidth: "60px", background: s.c + "18",
+                            border: `1.5px solid ${s.c}33`,
+                            borderRadius: 10, padding: "10px 8px", textAlign: "center",
+                          }}>
+                            <div style={{ fontSize: 12 }}>{s.e}</div>
+                            <div style={{ fontWeight: 900, fontSize: 16, color: s.c, lineHeight: 1, marginTop: 2 }}>
+                              {s.cnt}
+                            </div>
+                            <div style={{ fontSize: 9, color: s.c, fontWeight: 700, marginTop: 2, letterSpacing: "0.5px" }}>
+                              {pct}%
+                            </div>
+                            <div style={{ fontSize: 9, color: s.c + "99", marginTop: 1 }}>
+                              {s.lbl}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
             </div>
           )}

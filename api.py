@@ -178,28 +178,46 @@ def api_stats():
     index_file = get_path("index_file")
     if not index_file.exists():
         return JSONResponse(content={
-            "total": 0, "walls": 0, "contributors": 0,
-            "alpine": 0, "mainwall": 0, "progression": 0,
+            "total": 0,
+            "gym_alpine": 0, "gym_mainwall": 0, "gym_progression": 0, "gym_unknown": 0,
+            "source_tagged": 0, "source_official": 0, "source_contributor": 0,
+            "contributors": 0,
         })
 
     data = json.loads(index_file.read_text())
 
-    gym_counts: dict = {}
+    gym_counts: dict = {"alpine": 0, "mainwall": 0, "progression": 0, "unknown": 0}
+    source_counts: dict = {"tagged": 0, "official": 0, "contributor": 0}
     contributors: set = set()
+
     for m in data:
-        gym = m.get("gym") or m.get("source_key") or "unknown"
-        gym_counts[gym] = gym_counts.get(gym, 0) + 1
+        # Count by gym (handle unclassified)
+        gym = m.get("gym") or "unknown"
+        if gym in gym_counts:
+            gym_counts[gym] += 1
+        else:
+            gym_counts["unknown"] += 1
+
+        # Count by source
+        source_type = m.get("source_type") or "unknown"
+        if source_type in source_counts:
+            source_counts[source_type] += 1
+
+        # Track unique contributors (tagged + contributor sources)
         username = m.get("tagger_username") or m.get("username") or ""
-        if username and m.get("source_type") in ("tagged", "contributor"):
+        if username and source_type in ("tagged", "contributor"):
             contributors.add(username)
 
     return JSONResponse(content={
-        "total":        len(data),
-        "walls":        len(data),               # all indexed are wall images (post-filter)
+        "total": len(data),
+        "gym_alpine": gym_counts["alpine"],
+        "gym_mainwall": gym_counts["mainwall"],
+        "gym_progression": gym_counts["progression"],
+        "gym_unknown": gym_counts["unknown"],
+        "source_tagged": source_counts["tagged"],
+        "source_official": source_counts["official"],
+        "source_contributor": source_counts["contributor"],
         "contributors": len(contributors),
-        "alpine":       gym_counts.get("alpine", 0),
-        "mainwall":     gym_counts.get("mainwall", 0),
-        "progression":  gym_counts.get("progression", 0),
     })
 
 
