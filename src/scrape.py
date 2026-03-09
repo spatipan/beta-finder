@@ -20,6 +20,7 @@ Usage:
 import instaloader
 import argparse
 import json
+import os
 import time
 import itertools
 from pathlib import Path
@@ -146,11 +147,11 @@ def list_contributors():
 # ---------------------------------------------------------------------------
 
 def get_loader():
-    """Create instaloader with config-driven settings"""
+    """Create instaloader with config-driven settings and optional credential login"""
     cfg = load_config()
     insta_cfg = cfg.get("scraping", {}).get("instaloader", {})
 
-    return instaloader.Instaloader(
+    L = instaloader.Instaloader(
         download_videos=insta_cfg.get("download_videos", False),
         download_video_thumbnails=insta_cfg.get("download_video_thumbnails", True),
         download_geotags=insta_cfg.get("download_geotags", False),
@@ -160,9 +161,35 @@ def get_loader():
         quiet=insta_cfg.get("quiet", True),
     )
 
+    username = os.environ.get("INSTALOADER_USER")
+    password = os.environ.get("INSTALOADER_PASS")
+    
+    if username:
+        try:
+            L.load_session_from_file(username)
+            log.info(f"🔐 Loaded session for @{username} from file")
+        except FileNotFoundError:
+            log.info(f"ℹ️  No session file found for @{username}, attempting password login...")
+            if password:
+                try:
+                    L.login(username, password)
+                    log.info(f"🔐 Logged in as @{username}")
+                    L.save_session_to_file()
+                except Exception as e:
+                    log.warning(f"⚠️  Login failed ({e}) — continuing without auth")
+            else:
+                log.warning("⚠️  No session file and no password provided — continuing without auth")
+        except Exception as e:
+            log.warning(f"⚠️  Failed to load session ({e}) — continuing without auth")
+    else:
+        log.info("ℹ️  No Instagram credentials set — running unauthenticated")
+
+    return L
+
 
 def scrape_account(username, source_type, source_key,
-                   limit=100, delay=2.0, loader=None, scrape_mode="posts"):
+                   limit=100, delay=2.0, loader=None, scrape_mode="posts",
+                   gym_tags=None):
     """
     Scrape รูปจาก 1 Instagram account
     บันทึกลง data/images/{source_type}/{source_key}/
@@ -171,11 +198,13 @@ def scrape_account(username, source_type, source_key,
     source_key:  gym key (เช่น "alpine") หรือ username (สำหรับ contributor)
     scrape_mode: "posts" (account's own) | "tagged" (posts tagged by others) | "both"
     """
-    base_dir = get_path("data_dir")
-    out_dir = base_dir / source_type / source_key
+    if source_type == "official":
+        out_dir = get_path("official_dir") / source_key
+    else:
+        out_dir = get_path("contributors_dir") / source_key
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    icon = "🏟️" if source_type == "official" else "👤"
+    icon = "🔖" if source_type == "official" else "👤"
     log.info(f"{icon} [{source_type.upper()}] Scraping @{username} → {out_dir}")
 
     L = loader or get_loader()
@@ -222,7 +251,8 @@ def scrape_account(username, source_type, source_key,
             base_meta = {
                 "source_type": source_type,
                 "source_key":  source_key,
-                "gym":         source_key if source_type == "official" else None,
+                "gym":         source_key if source_type == "official" else (gym_tags[0] if gym_tags else None),
+                "gyms":        [source_key] if source_type == "official" else (gym_tags or []),
                 "username":    username,
                 "shortcode":   post.shortcode,
                 "url":         f"https://www.instagram.com/p/{post.shortcode}/",
@@ -255,6 +285,10 @@ def scrape_account(username, source_type, source_key,
                     keyframes = extract_keyframes(video_path, kf_n_frames, kf_skip_pct)
                     if kf_delete_video:
                         video_path.unlink(missing_ok=True)
+                        # Clean up instaloader's metadata JSON files (don't store them)
+                        json_files = list(out_dir.glob(f"{post.shortcode}*.json"))
+                        for json_file in json_files:
+                            json_file.unlink(missing_ok=True)
 
                     for kf_idx, kf_path in enumerate(keyframes):
                         metadata.append({
@@ -336,7 +370,7 @@ def merge_and_save(new_meta: list):
             existing_files.add(m["filename"])
             added += 1
     save_index(all_metadata)
-    log.info(f"✅ Saved {len(all_metadata)} entries (+{added} new) → {INDEX_FILE}")
+    log.info(f"✅ Saved {len(all_metadata)} entries (+{added} new) → {get_path('index_file')}")
     return all_metadata
 
 
@@ -409,17 +443,20 @@ def main():
         return
 
     # ── Build task list ────────────────────────────────────────────────────
-    # tasks: list of (username, source_type, source_key)
+    # tasks: list of (username, source_type, source_key, gym_tags)
     tasks = []
 
     if args.contributor:
         username = args.contributor.lstrip("@")
-        tasks.append((username, "contributor", username))
+        # look up gym_tags from contributors.json if available
+        contribs = {c["username"]: c for c in load_contributors()}
+        gym_tags = contribs.get(username, {}).get("gyms", [])
+        tasks.append((username, "contributor", username, gym_tags))
 
     elif args.contributors_only:
         for c in load_contributors():
             if c.get("active", True):
-                tasks.append((c["username"], "contributor", c["username"]))
+                tasks.append((c["username"], "contributor", c["username"], c.get("gyms", [])))
 
     else:
         # default: official gyms + all contributors
@@ -433,13 +470,13 @@ def main():
 
         for key, gym_info in gyms.items():
             uname = gym_info["instagram"]
-            tasks.append((uname, "official", key))
+            tasks.append((uname, "official", key, []))
 
         # contributors ด้วย ถ้าไม่ได้ระบุ --gym เดียว
         if args.gym is None:
             for c in load_contributors():
                 if c.get("active", True):
-                    tasks.append((c["username"], "contributor", c["username"]))
+                    tasks.append((c["username"], "contributor", c["username"], c.get("gyms", [])))
 
     if not tasks:
         log.info("Nothing to scrape. Use --add-contributor USERNAME to add beta contributors.")
@@ -448,12 +485,13 @@ def main():
     log.info(f"📋 Scraping {len(tasks)} accounts...")
 
     # ── Scrape all ────────────────────────────────────────────────────────
+    cfg          = load_config()
     loader       = get_loader()
     all_metadata, existing_files = load_index()
     new_this_run = []
     scrape_modes = cfg.get("scraping", {}).get("scrape_modes", {})
 
-    for username, source_type, source_key in tasks:
+    for username, source_type, source_key, gym_tags in tasks:
         # Determine scrape mode (Phase 2.1)
         if args.mode:
             mode = args.mode
@@ -468,7 +506,7 @@ def main():
         new_meta = scrape_account(
             username, source_type, source_key,
             limit=args.limit, delay=args.delay, loader=loader,
-            scrape_mode=mode,
+            scrape_mode=mode, gym_tags=gym_tags,
         )
         for m in new_meta:
             if m["filename"] not in existing_files:
@@ -481,7 +519,7 @@ def main():
     official_n    = sum(1 for m in all_metadata if m["source_type"] == "official")
     contributor_n = sum(1 for m in all_metadata if m["source_type"] == "contributor")
 
-    log.info(f"\n✅ Index updated → {INDEX_FILE}")
+    log.info(f"\n✅ Index updated → {get_path('index_file')}")
     log.info(f"   Official accounts:  {official_n} images")
     log.info(f"   Contributor accounts: {contributor_n} images")
     log.info(f"   New this run:       {len(new_this_run)} images")
