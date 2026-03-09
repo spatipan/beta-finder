@@ -18,6 +18,8 @@ gyms:
 
 paths:
   data_dir: "data/images"
+  official_dir: "data/images/official"
+  contributors_dir: "data/images/contributors"
   index_file: "data/gym_index.json"
   contributors_file: "data/contributors.json"
   embeddings_file: "data/embeddings.pkl"

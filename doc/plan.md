@@ -61,7 +61,7 @@ is_wall, wall_score, filename
 
 ### Layout
 - **Header:** Logo 🧗 + "BetaFinder CNX" title + Thai tagline
-- **Gym filter:** Checkbox pills (Alpine=🟢#4CAF50, MainWall=🔵#2196F3, Progression=🟠#FF9800, All=🌐#FFD700)
+- **Gym filter:** 
 - **Upload section:** Drag-drop image input with preview + metadata display
 - **Search button:** Gradient (#ff6b35→#ff8c42) with hover animation
 - **Results:**
@@ -70,7 +70,7 @@ is_wall, wall_score, filename
   - Gym emoji badges, progress bars, caption, date, username
   - IG link (clickable)
 
-### Sidebar
+### Setting section
 - **Settings:** Model selector (ViT-B-32 fast vs ViT-L-14 accurate), top-k slider
 - **Statistics:** Total images, images per gym (cards with metrics)
 - **Tips:** Photography best practices
