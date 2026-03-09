@@ -7,6 +7,7 @@ Usage:
     python search.py photo.jpg --gym alpine                     # filter by gym
     python search.py photo.jpg --open                           # open results in browser
     python search.py photo.jpg --backbone dinov2_vitl14         # override with DINOv2
+    python search.py photo.jpg --backbone superpoint            # override with SuperPoint
     python search.py photo.jpg --backbone sift                  # override with SIFT
     python search.py photo.jpg --model EVA02-E-14 --pretrained laion2b_s4b_b115k  # override with EVA-CLIP
 """
@@ -81,7 +82,9 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
     # โหลด model (ตรงกับ index) using shared embedding module
     model, preprocess, device = load_model(use_backbone, use_model_name, use_pretrained)
     # Determine model type
-    if use_backbone == "sift" or use_model_name == "sift":
+    if use_backbone == "superpoint" or use_model_name == "superpoint":
+        model_type = "superpoint"
+    elif use_backbone == "sift" or use_model_name == "sift":
         model_type = "sift"
     elif use_backbone and use_backbone.startswith("dinov2"):
         model_type = "dinov2"

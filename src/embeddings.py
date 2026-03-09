@@ -6,8 +6,9 @@ Provides model loading and embedding functions to be used by both:
 - search.py: Generate embeddings for query images
 
 Supports multiple embedding methods:
-- Deep learning: CLIP, SigLIP, EVA-CLIP, DINOv2
-- Traditional: SIFT (Scale-Invariant Feature Transform)
+- Deep learning semantic: CLIP, SigLIP, EVA-CLIP, DINOv2
+- Deep learning local: SuperPoint + SuperGlue (GPU required)
+- Traditional: SIFT (Scale-Invariant Feature Transform, CPU only)
 """
 
 from pathlib import Path
@@ -27,9 +28,9 @@ log = setup_logger(__name__)
 
 def load_model(backbone: str = None, model_name: str = None, pretrained: str = None):
     """
-    โหลด embedding model (CLIP, SigLIP, EVA-CLIP, DINOv2, หรือ SIFT)
+    โหลด embedding model (CLIP, SigLIP, EVA-CLIP, DINOv2, SuperPoint, หรือ SIFT)
 
-    Deep Learning models (via open_clip):
+    Semantic Deep Learning models (via open_clip):
       CLIP (OpenAI):
         - "ViT-B-32" + "openai"        → เร็ว, RAM น้อย (~350MB)
         - "ViT-L-14" + "openai"        → แม่นขึ้น (~900MB)
@@ -42,7 +43,11 @@ def load_model(backbone: str = None, model_name: str = None, pretrained: str = N
         - "dinov2_vitb14"  → 768-dim, เร็ว, ดี
         - "dinov2_vitl14"  → 1024-dim, แม่นกว่า
 
-    Traditional Computer Vision:
+    Local Feature Deep Learning (GPU required):
+      SuperPoint + SuperGlue:
+        - "superpoint"  → GPU-accelerated keypoint detection + matching
+
+    Traditional Computer Vision (CPU only):
       SIFT (Scale-Invariant Feature Transform):
         - "sift"  → ไม่ต้อง GPU, ดีสำหรับ climbing wall features
     """
@@ -53,6 +58,13 @@ def load_model(backbone: str = None, model_name: str = None, pretrained: str = N
         return load_sift_model()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Handle SuperPoint (GPU-required local features)
+    if backbone == "superpoint" or model_name == "superpoint":
+        if not torch.cuda.is_available():
+            log.warning("SuperPoint requires GPU but CUDA not available. Falling back to SIFT.")
+            return load_sift_model()
+        return load_superpoint_model(device)
 
     # Determine if using DINOv2 or CLIP-based
     if backbone and backbone.startswith("dinov2"):
@@ -110,6 +122,39 @@ def load_sift_model():
     return sift, None, "cpu"
 
 
+def load_superpoint_model(device: str = "cuda"):
+    """
+    โหลด SuperPoint detector + SuperGlue matcher
+
+    Requires:
+    - pip install kornia-moons
+    - GPU (CUDA)
+
+    Returns:
+        tuple: (superpoint_model, None, device)
+    """
+    import torch
+
+    try:
+        from kornia_moons.feature import SuperPoint, SuperGlue
+
+        log.info(f"Loading SuperPoint detector + SuperGlue matcher on {device}")
+
+        # Initialize SuperPoint
+        superpoint = SuperPoint(max_num_keypoints=256).to(device).eval()
+
+        # Initialize SuperGlue
+        superglue = SuperGlue(pretrained="outdoor").to(device).eval()
+
+        # Return SuperPoint detector (SuperGlue is used for matching during search)
+        return superpoint, None, device
+
+    except ImportError:
+        log.error("SuperPoint requires: pip install kornia-moons")
+        log.warning("Falling back to SIFT instead")
+        return load_sift_model()
+
+
 def load_dinov2_model(backbone: str, device: str = None):
     """โหลด DINOv2 model"""
     import torch
@@ -147,10 +192,10 @@ def embed_batch(image_paths: list[Path], model, preprocess, device, model_type: 
 
     Args:
         image_paths: List of Path objects pointing to images
-        model: Loaded model (CLIP, DINOv2, or SIFT)
-        preprocess: Preprocessing function from model loader (None for SIFT)
+        model: Loaded model (CLIP, DINOv2, SIFT, or SuperPoint)
+        preprocess: Preprocessing function from model loader (None for SIFT/SuperPoint)
         device: torch device (cuda, cpu, or "cpu" for SIFT)
-        model_type: "clip", "dinov2", or "sift"
+        model_type: "clip", "dinov2", "sift", or "superpoint"
         batch_size: Batch size for embedding (uses config default if None)
 
     Returns:
@@ -159,6 +204,10 @@ def embed_batch(image_paths: list[Path], model, preprocess, device, model_type: 
     # Handle SIFT separately
     if model_type == "sift":
         return embed_batch_sift(image_paths, model)
+
+    # Handle SuperPoint separately
+    if model_type == "superpoint":
+        return embed_batch_superpoint(image_paths, model, device)
 
     import torch
 
@@ -243,16 +292,73 @@ def embed_batch_sift(image_paths: list[Path], sift_detector) -> np.ndarray:
     return np.vstack([e.reshape(1, -1) for e in all_embeds]).astype("float32")
 
 
+def embed_batch_superpoint(image_paths: list[Path], superpoint, device: str) -> np.ndarray:
+    """
+    Embed a batch of images using SuperPoint keypoint detection.
+
+    Args:
+        image_paths: List of Path objects pointing to images
+        superpoint: Loaded SuperPoint detector model
+        device: torch device (cuda)
+
+    Returns:
+        numpy array of SuperPoint descriptors, shape (N, 256), dtype float32
+    """
+    import torch
+    import cv2
+
+    all_embeds = []
+
+    for p in tqdm(image_paths, desc="Extracting SuperPoint"):
+        try:
+            # Read image
+            img_cv = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if img_cv is None:
+                log.warning(f"Skip {p}: Cannot read image")
+                all_embeds.append(np.zeros(256, dtype="float32"))
+                continue
+
+            # Resize for consistency
+            h, w = img_cv.shape
+            scale = 320.0 / max(h, w)
+            new_h, new_w = int(h * scale), int(w * scale)
+            img_resized = cv2.resize(img_cv, (new_w, new_h))
+
+            # Convert to tensor
+            img_tensor = torch.from_numpy(img_resized).float()[None, None].to(device) / 255.0
+
+            with torch.no_grad():
+                # Detect keypoints and descriptors
+                lafs, resp, desc = superpoint({"image": img_tensor})
+
+            if desc is None or desc.shape[1] == 0:
+                log.warning(f"Skip {p}: No SuperPoint descriptors found")
+                all_embeds.append(np.zeros(256, dtype="float32"))
+            else:
+                # Aggregate descriptors: use mean of all descriptors
+                agg_embed = desc.squeeze().mean(dim=0).cpu().numpy().astype("float32")
+                if agg_embed.ndim == 0:
+                    # Single descriptor case
+                    agg_embed = desc.squeeze().cpu().numpy().astype("float32")
+                all_embeds.append(agg_embed)
+
+        except Exception as e:
+            log.warning(f"Skip {p}: {e}")
+            all_embeds.append(np.zeros(256, dtype="float32"))
+
+    return np.vstack([e.reshape(1, -1) for e in all_embeds]).astype("float32")
+
+
 def embed_single(image_path: Path, model, preprocess, device, model_type: str = "clip") -> np.ndarray:
     """
     Embed a single image.
 
     Args:
         image_path: Path to the image file
-        model: Loaded model (CLIP, DINOv2, or SIFT)
-        preprocess: Preprocessing function from model loader (None for SIFT)
+        model: Loaded model (CLIP, DINOv2, SIFT, or SuperPoint)
+        preprocess: Preprocessing function from model loader (None for SIFT/SuperPoint)
         device: torch device (cuda, cpu, or "cpu" for SIFT)
-        model_type: "clip", "dinov2", or "sift"
+        model_type: "clip", "dinov2", "sift", or "superpoint"
 
     Returns:
         numpy array of shape (1, embed_dim), dtype float32
@@ -260,6 +366,10 @@ def embed_single(image_path: Path, model, preprocess, device, model_type: str = 
     # Handle SIFT separately
     if model_type == "sift":
         return embed_single_sift(image_path, model)
+
+    # Handle SuperPoint separately
+    if model_type == "superpoint":
+        return embed_single_superpoint(image_path, model, device)
 
     import torch
 
@@ -311,3 +421,54 @@ def embed_single_sift(image_path: Path, sift_detector) -> np.ndarray:
     except Exception as e:
         log.warning(f"Error embedding {image_path}: {e}")
         return np.zeros((1, 128), dtype="float32")
+
+
+def embed_single_superpoint(image_path: Path, superpoint, device: str) -> np.ndarray:
+    """
+    Embed a single image using SuperPoint keypoint detection.
+
+    Args:
+        image_path: Path to the image file
+        superpoint: Loaded SuperPoint detector model
+        device: torch device (cuda)
+
+    Returns:
+        numpy array of shape (1, 256), dtype float32
+    """
+    import torch
+    import cv2
+
+    try:
+        # Read image
+        img_cv = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+        if img_cv is None:
+            log.warning(f"Cannot read image: {image_path}")
+            return np.zeros((1, 256), dtype="float32")
+
+        # Resize for consistency
+        h, w = img_cv.shape
+        scale = 320.0 / max(h, w)
+        new_h, new_w = int(h * scale), int(w * scale)
+        img_resized = cv2.resize(img_cv, (new_w, new_h))
+
+        # Convert to tensor
+        img_tensor = torch.from_numpy(img_resized).float()[None, None].to(device) / 255.0
+
+        with torch.no_grad():
+            # Detect keypoints and descriptors
+            lafs, resp, desc = superpoint({"image": img_tensor})
+
+        if desc is None or desc.shape[1] == 0:
+            log.warning(f"No SuperPoint descriptors found: {image_path}")
+            return np.zeros((1, 256), dtype="float32")
+
+        # Aggregate descriptors: use mean of all descriptors
+        agg_embed = desc.squeeze().mean(dim=0).cpu().numpy().astype("float32")
+        if agg_embed.ndim == 0:
+            # Single descriptor case
+            agg_embed = desc.squeeze().cpu().numpy().astype("float32")
+        return agg_embed.reshape(1, -1)
+
+    except Exception as e:
+        log.warning(f"Error embedding {image_path}: {e}")
+        return np.zeros((1, 256), dtype="float32")
