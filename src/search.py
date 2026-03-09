@@ -21,13 +21,14 @@ import numpy as np
 from PIL import Image
 
 from src.config import load_config, get_path, get_gym_names, get_nested
+from src.index import load_posts_index, load_frames_index
 from src.logger import setup_logger
 
 log = setup_logger(__name__)
 
 
 def load_index():
-    """โหลด FAISS index + metadata"""
+    """โหลด FAISS index + metadata (supports new two-level schema)"""
     import faiss
 
     index_file = get_path("index_file")
@@ -37,15 +38,31 @@ def load_index():
     if not faiss_file.exists():
         raise FileNotFoundError(f"❌ Run embed.py first to build the index.")
 
-    index      = faiss.read_index(str(faiss_file))
-    path_list  = json.loads(paths_file.read_text())
-    metadata   = json.loads(index_file.read_text())
+    index     = faiss.read_index(str(faiss_file))
+    path_list = json.loads(paths_file.read_text())
 
-    # สร้าง lookup: filename → metadata
-    meta_by_file = {}
-    for m in metadata:
-        meta_by_file[m["filename"]] = m
-        meta_by_file[m["filename"] + ".jpg"] = m
+    # Try new two-level schema first
+    posts  = load_posts_index()
+    frames = load_frames_index()
+
+    if posts and frames:
+        # Build lookup: filename → merged post+frame metadata
+        posts_by_shortcode = {p["shortcode"]: p for p in posts}
+        meta_by_file = {}
+        for frame in frames:
+            shortcode = frame.get("shortcode")
+            post = posts_by_shortcode.get(shortcode, {})
+            merged = {**post, **frame}   # frame fields take precedence
+            fname = frame["filename"]
+            meta_by_file[fname] = merged
+            meta_by_file[fname + ".jpg"] = merged
+    else:
+        # Fallback: flat gym_index
+        metadata = json.loads(index_file.read_text())
+        meta_by_file = {}
+        for m in metadata:
+            meta_by_file[m["filename"]] = m
+            meta_by_file[m["filename"] + ".jpg"] = m
 
     return index, path_list, meta_by_file
 
@@ -107,20 +124,26 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
         filename = path_list[idx]
         meta     = meta_by_file.get(filename, {})
 
-        # filter by gym ถ้าระบุ
-        if gym_filter and meta.get("gym") != gym_filter:
+        # Filter by gym — support both old (gym: str) and new (gyms: list) schema
+        gyms_list = meta.get("gyms") or ([meta["gym"]] if meta.get("gym") else [])
+        if gym_filter and gym_filter not in gyms_list:
             continue
 
         caption_text = meta.get("caption", "")
         if caption_text:
             caption_text = caption_text[:caption_max_length] + "..."
 
+        # Primary gym for display (first in list, or fallback)
+        primary_gym = gyms_list[0] if gyms_list else (meta.get("gym") or "?")
+
         results.append({
             "rank":     len(results) + 1,
             "score":    float(score),
             "filename": filename,
-            "gym":      meta.get("gym") or "?",
+            "gym":      primary_gym,
+            "gyms":     gyms_list,
             "url":      meta.get("url", ""),
+            "username": meta.get("username", ""),
             "caption":  caption_text,
             "date":     meta.get("date", "")[:10],
         })
