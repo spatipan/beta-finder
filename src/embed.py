@@ -228,6 +228,14 @@ def main():
         model_type = "dinov2" if args.backbone and args.backbone.startswith("dinov2") else "clip"
         new_embeds = embed_images(pending, model, preprocess, device, model_type=model_type, batch_size=args.batch)
 
+        # Store model metadata for search.py to use matching model
+        model_metadata = {
+            "model_type": model_type,
+            "backbone": args.backbone,
+            "model_name": args.model or get_nested("embedding.model_name"),
+            "pretrained": args.pretrained or get_nested("embedding.pretrained"),
+        }
+
         for path, emb in zip(pending, new_embeds):
             embed_cache[str(path)] = emb
 
@@ -249,6 +257,12 @@ def main():
     # save path_list (เพื่อ map index → filename)
     with open(faiss_file.with_suffix(".paths.json"), "w") as f:
         json.dump(path_list, f)
+
+    # save model metadata (สำหรับ search.py ใช้ model เดียวกัน)
+    if pending:
+        with open(faiss_file.with_suffix(".model.json"), "w") as f:
+            json.dump(model_metadata, f)
+        log.info(f"✅ Model metadata saved → {faiss_file.with_suffix('.model.json')}")
 
     log.info(f"✅ FAISS index saved → {faiss_file}")
     log.info(f"   Total indexed: {len(path_list)} images")
