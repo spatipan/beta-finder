@@ -92,14 +92,17 @@ python scrape.py --add-contributor username --no-scrape
 # Build index (default: ViT-B-32 model, faster)
 python embed.py
 
-# Rebuild with ViT-L-14 (more accurate but slower)
+# Use a specific model
 python embed.py --model ViT-L-14
 
-# Force rebuild (clear cache)
-python embed.py --rebuild
+# Use specific pretrained weights
+python embed.py --model ViT-L-14 --pretrained openai
 
-# Show stats
-python embed.py --stats
+# Customize batch size (for memory constraints)
+python embed.py --batch 16
+
+# Force rebuild (re-embed all images, ignore cache)
+python embed.py --rebuild
 ```
 
 ### 3. **search.py** — Query the index with a photo
