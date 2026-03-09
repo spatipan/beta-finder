@@ -1,10 +1,11 @@
 """
-embed.py - สร้าง CLIP embeddings สำหรับรูปทั้งหมด
+embed.py - สร้าง embeddings (CLIP หรือ DINOv2) สำหรับรูปทั้งหมด
 และ build vector index สำหรับ similarity search
 
 Usage:
-    python embed.py              # embed รูปทั้งหมดใน data/images/
+    python embed.py              # embed รูปทั้งหมดใน data/images/ (default: CLIP)
     python embed.py --batch 32   # ปรับ batch size
+    python embed.py --backbone dinov2_vitb14  # ใช้ DINOv2
 """
 
 import json
@@ -23,18 +24,39 @@ log = setup_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Model loader - ใช้ open_clip (รองรับหลาย backbone)
+# Model loader - รองรับ CLIP และ DINOv2
 # ---------------------------------------------------------------------------
 
-def load_model(model_name: str = None, pretrained: str = None):
+def load_model(backbone: str = None, model_name: str = None, pretrained: str = None):
     """
-    โหลด CLIP model
-    แนะนำ:
+    โหลด embedding model (CLIP หรือ DINOv2)
+
+    CLIP แนะนำ:
       - "ViT-B-32" + "openai"   → เร็ว, RAM น้อย (~350MB)
       - "ViT-L-14" + "openai"   → แม่นขึ้น (~900MB)
+
+    DINOv2 แนะนำ:
+      - "dinov2_vitb14"  → 768-dim, เร็ว, ดี
+      - "dinov2_vitl14"  → 1024-dim, แม่นกว่า
     """
+    import torch
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Determine if using DINOv2 or CLIP
+    if backbone and backbone.startswith("dinov2"):
+        return load_dinov2_model(backbone, device)
+    else:
+        return load_clip_model(model_name, pretrained, device)
+
+
+def load_clip_model(model_name: str = None, pretrained: str = None, device: str = None):
+    """โหลด CLIP model via open_clip"""
     import open_clip
     import torch
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Use config defaults if not provided
     if model_name is None:
@@ -42,8 +64,7 @@ def load_model(model_name: str = None, pretrained: str = None):
     if pretrained is None:
         pretrained = get_nested("embedding.pretrained")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    log.info(f"Loading {model_name} ({pretrained}) on {device}")
+    log.info(f"Loading CLIP {model_name} ({pretrained}) on {device}")
 
     model, _, preprocess = open_clip.create_model_and_transforms(
         model_name, pretrained=pretrained
@@ -52,14 +73,41 @@ def load_model(model_name: str = None, pretrained: str = None):
     return model, preprocess, device
 
 
+def load_dinov2_model(backbone: str, device: str = None):
+    """โหลด DINOv2 model"""
+    import torch
+    import torchvision.transforms as transforms
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    log.info(f"Loading DINOv2 {backbone} on {device}")
+
+    # Load DINOv2 model
+    model = torch.hub.load("facebookresearch/dinov2", backbone)
+    model.eval().to(device)
+
+    # DINOv2 preprocess: normalize to ImageNet stats
+    preprocess = transforms.Compose([
+        transforms.Resize((518, 518)),
+        transforms.CenterCrop(518),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                           std=[0.229, 0.224, 0.225])
+    ])
+
+    return model, preprocess, device
+
+
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
 
-def embed_images(image_paths: list[Path], model, preprocess, device,
+def embed_images(image_paths: list[Path], model, preprocess, device, model_type: str = "clip",
                  batch_size: int = None) -> np.ndarray:
     """
     รับ list ของ image paths → return numpy array shape (N, embed_dim)
+    รองรับ CLIP และ DINOv2
     """
     import torch
 
@@ -79,12 +127,18 @@ def embed_images(image_paths: list[Path], model, preprocess, device,
                 tensors.append(preprocess(img))
             except Exception as e:
                 log.warning(f"Skip {p}: {e}")
-                tensors.append(preprocess(Image.new("RGB", (224, 224))))  # blank fallback
+                # blank fallback - preprocess expects PIL Image or tensor depending on model
+                blank = Image.new("RGB", (224, 224))
+                tensors.append(preprocess(blank))
 
         batch_tensor = torch.stack(tensors).to(device)
 
         with torch.no_grad():
-            features = model.encode_image(batch_tensor)
+            if model_type == "clip":
+                features = model.encode_image(batch_tensor)
+            else:  # dinov2
+                features = model(batch_tensor)
+
             features = features / features.norm(dim=-1, keepdim=True)  # L2 normalize
 
         all_embeds.append(features.cpu().numpy())
@@ -119,8 +173,12 @@ def main():
     load_config()  # Load config at startup
 
     parser = argparse.ArgumentParser(description="BetaFinder CNX - Embedder")
-    parser.add_argument("--model",     default=None)
-    parser.add_argument("--pretrained", default=None)
+    parser.add_argument("--backbone",   default=None,
+                        help="Model backbone: CLIP (default) or dinov2_vitb14/dinov2_vitl14")
+    parser.add_argument("--model",     default=None,
+                        help="CLIP model name (e.g., ViT-B-32)")
+    parser.add_argument("--pretrained", default=None,
+                        help="CLIP pretrained weights (e.g., openai)")
     parser.add_argument("--batch",     type=int, default=None)
     parser.add_argument("--rebuild",   action="store_true",
                         help="Re-embed รูปทั้งหมด แม้มี cache แล้ว")
@@ -166,8 +224,9 @@ def main():
     log.info(f"   Pending: {len(pending)} images to embed")
 
     if pending:
-        model, preprocess, device = load_model(args.model, args.pretrained)
-        new_embeds = embed_images(pending, model, preprocess, device, batch_size=args.batch)
+        model, preprocess, device = load_model(args.backbone, args.model, args.pretrained)
+        model_type = "dinov2" if args.backbone and args.backbone.startswith("dinov2") else "clip"
+        new_embeds = embed_images(pending, model, preprocess, device, model_type=model_type, batch_size=args.batch)
 
         for path, emb in zip(pending, new_embeds):
             embed_cache[str(path)] = emb
