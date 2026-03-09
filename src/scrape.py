@@ -306,11 +306,13 @@ def scrape_account(username, source_type, source_key,
                 for idx, node in enumerate(nodes):
                     filename = f"{post.shortcode}_{idx}.jpg"
                     filepath = out_dir / filename
+                    # download_pic expects path WITHOUT extension (it adds .jpg automatically)
+                    filepath_no_ext = out_dir / f"{post.shortcode}_{idx}"
 
                     if not filepath.exists():
                         try:
                             node_url = getattr(node, 'display_url', getattr(node, 'url', None))
-                            L.download_pic(str(filepath), node_url, post.date_utc)
+                            L.download_pic(str(filepath_no_ext), node_url, post.date_utc)
                             log.info(f"   ✅ {filename}")
                         except Exception as e:
                             log.warning(f"   ⚠️  Failed {filename}: {e}")
