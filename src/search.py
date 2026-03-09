@@ -2,10 +2,12 @@
 search.py - รับรูปผนัง → return top-K รูปที่คล้ายกันจาก Instagram
 
 Usage:
-    python search.py photo.jpg              # top 5 results
-    python search.py photo.jpg --top 10     # top 10
-    python search.py photo.jpg --gym alpine # เฉพาะ gym นั้น
-    python search.py photo.jpg --open       # เปิดเบราว์เซอร์ไปยัง IG post
+    python search.py photo.jpg                      # auto-detect model from index
+    python search.py photo.jpg --top 10             # top 10 results
+    python search.py photo.jpg --gym alpine         # filter by gym
+    python search.py photo.jpg --open               # open results in browser
+    python search.py photo.jpg --backbone dinov2_vitl14  # override with DINOv2
+    python search.py photo.jpg --model EVA02-E-14 --pretrained merged2  # override with EVA-CLIP
 """
 
 import json
@@ -71,7 +73,19 @@ def load_model(backbone: str = None, model_name: str = None, pretrained: str = N
 
 
 def load_clip_model(model_name: str = None, pretrained: str = None, device: str = None):
-    """โหลด CLIP model via open_clip"""
+    """
+    โหลด CLIP-based model via open_clip
+
+    Supported models:
+      CLIP:
+        - "ViT-B-32" + "openai"   → เร็ว, RAM น้อย (~350MB)
+        - "ViT-L-14" + "openai"   → แม่นขึ้น (~900MB)
+      SigLIP:
+        - "ViT-L-14" + "webli"    → สมดุล, ดีสำหรับข้อความยาว
+        - "ViT-SO400M-14" + "webli" → ใหญ่, แม่นที่สุด
+      EVA-CLIP:
+        - "EVA02-E-14" + "merged2" → ประสิทธิภาพสูง, รายละเอียดมาก
+    """
     import open_clip
     import torch
 
@@ -84,7 +98,7 @@ def load_clip_model(model_name: str = None, pretrained: str = None, device: str 
     if pretrained is None:
         pretrained = get_nested("embedding.pretrained")
 
-    log.info(f"Loading CLIP {model_name} ({pretrained}) on {device}")
+    log.info(f"Loading {model_name} ({pretrained}) on {device}")
 
     model, _, preprocess = open_clip.create_model_and_transforms(
         model_name, pretrained=pretrained

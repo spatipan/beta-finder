@@ -1,11 +1,14 @@
 """
-embed.py - สร้าง embeddings (CLIP หรือ DINOv2) สำหรับรูปทั้งหมด
+embed.py - สร้าง embeddings (CLIP-based, SigLIP, EVA-CLIP, หรือ DINOv2) สำหรับรูปทั้งหมด
 และ build vector index สำหรับ similarity search
 
 Usage:
-    python embed.py              # embed รูปทั้งหมดใน data/images/ (default: CLIP)
-    python embed.py --batch 32   # ปรับ batch size
-    python embed.py --backbone dinov2_vitb14  # ใช้ DINOv2
+    python embed.py                                    # default: CLIP ViT-B-32
+    python embed.py --model ViT-L-14 --pretrained openai    # CLIP ViT-L-14
+    python embed.py --model ViT-L-14 --pretrained webli     # SigLIP ViT-L-14
+    python embed.py --model EVA02-E-14 --pretrained merged2 # EVA-CLIP E-14
+    python embed.py --backbone dinov2_vitb14                # DINOv2 ViT-B14
+    python embed.py --batch 32                              # ปรับ batch size
 """
 
 import json
@@ -29,13 +32,19 @@ log = setup_logger(__name__)
 
 def load_model(backbone: str = None, model_name: str = None, pretrained: str = None):
     """
-    โหลด embedding model (CLIP หรือ DINOv2)
+    โหลด embedding model (CLIP-based หรือ DINOv2)
 
-    CLIP แนะนำ:
-      - "ViT-B-32" + "openai"   → เร็ว, RAM น้อย (~350MB)
-      - "ViT-L-14" + "openai"   → แม่นขึ้น (~900MB)
+    CLIP-based models (via open_clip):
+      CLIP:
+        - "ViT-B-32" + "openai"        → เร็ว, RAM น้อย (~350MB)
+        - "ViT-L-14" + "openai"        → แม่นขึ้น (~900MB)
+      SigLIP (better for text matching):
+        - "ViT-L-14" + "webli"         → สมดุล, ดี
+        - "ViT-SO400M-14" + "webli"    → ใหญ่, แม่นที่สุด
+      EVA-CLIP (strongest vision):
+        - "EVA02-E-14" + "merged2"     → ประสิทธิภาพสูง, รายละเอียดมาก
 
-    DINOv2 แนะนำ:
+    DINOv2 (self-supervised):
       - "dinov2_vitb14"  → 768-dim, เร็ว, ดี
       - "dinov2_vitl14"  → 1024-dim, แม่นกว่า
     """
@@ -51,7 +60,19 @@ def load_model(backbone: str = None, model_name: str = None, pretrained: str = N
 
 
 def load_clip_model(model_name: str = None, pretrained: str = None, device: str = None):
-    """โหลด CLIP model via open_clip"""
+    """
+    โหลด CLIP-based model via open_clip
+
+    Supported models:
+      CLIP:
+        - "ViT-B-32" + "openai"   → เร็ว, RAM น้อย (~350MB)
+        - "ViT-L-14" + "openai"   → แม่นขึ้น (~900MB)
+      SigLIP:
+        - "ViT-L-14" + "webli"    → สมดุล, ดีสำหรับข้อความยาว
+        - "ViT-SO400M-14" + "webli" → ใหญ่, แม่นที่สุด
+      EVA-CLIP:
+        - "EVA02-E-14" + "merged2" → ประสิทธิภาพสูง, รายละเอียดมาก
+    """
     import open_clip
     import torch
 
@@ -64,7 +85,7 @@ def load_clip_model(model_name: str = None, pretrained: str = None, device: str 
     if pretrained is None:
         pretrained = get_nested("embedding.pretrained")
 
-    log.info(f"Loading CLIP {model_name} ({pretrained}) on {device}")
+    log.info(f"Loading {model_name} ({pretrained}) on {device}")
 
     model, _, preprocess = open_clip.create_model_and_transforms(
         model_name, pretrained=pretrained
