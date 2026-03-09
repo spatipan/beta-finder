@@ -47,6 +47,10 @@ scraping:
 
   # Instaloader configuration
   instaloader:
+    # Optional: Set via INSTALOADER_USER and INSTALOADER_PASS env vars to avoid 401 errors
+    # login:
+    #   username: null  # will use env var INSTALOADER_USER if set
+    #   password: null  # will use env var INSTALOADER_PASS if set
     download_videos: true   # enable for keyframe extraction
     download_video_thumbnails: true
     download_geotags: false
