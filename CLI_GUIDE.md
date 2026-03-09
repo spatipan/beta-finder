@@ -86,7 +86,23 @@ python scrape.py --list-contributors
 python scrape.py --add-contributor username --no-scrape
 ```
 
-### 2. **embed.py** — Build CLIP embeddings & FAISS index
+### 2. **filter.py** — Wall classification (CLIP zero-shot)
+
+```bash
+# Filter indexed images to keep only walls
+python filter.py
+
+# Show filter stats
+python filter.py --stats
+
+# Force rebuild filters
+python filter.py --rebuild
+
+# Change threshold (default: 0.05)
+python filter.py --threshold 0.1
+```
+
+### 3. **embed.py** — Build CLIP embeddings & FAISS index
 
 ```bash
 # Build index (default: ViT-B-32 model, faster)
@@ -105,7 +121,7 @@ python embed.py --batch 16
 python embed.py --rebuild
 ```
 
-### 3. **search.py** — Query the index with a photo
+### 4. **search.py** — Query the index with a photo
 
 ```bash
 # Search with defaults (top 5, all gyms)
@@ -125,22 +141,6 @@ python search.py wall_photo.jpg --json
 
 # Use specific model
 python search.py wall_photo.jpg --model ViT-L-14
-```
-
-### 4. **filter.py** — Wall classification (CLIP zero-shot)
-
-```bash
-# Filter indexed images to keep only walls
-python filter.py
-
-# Show filter stats
-python filter.py --stats
-
-# Force rebuild filters
-python filter.py --rebuild
-
-# Change threshold (default: 0.05)
-python filter.py --threshold 0.1
 ```
 
 ### 5. **update.py** — Auto-update pipeline (cron-friendly)
@@ -278,11 +278,11 @@ export BETAFINDER_DATA_DIR="/path/to/data"
 # Scrape all sources
 python scrape.py
 
+# Filter walls (remove non-climbing content)
+python filter.py
+
 # Build embeddings
 python embed.py
-
-# Filter walls
-python filter.py
 
 # Test search
 python search.py test.jpg --top 5
@@ -292,6 +292,9 @@ python search.py test.jpg --top 5
 ```bash
 # Quick update (community-tagged posts only)
 python scrape.py --mode tagged --limit 50
+
+# Filter new images
+python filter.py
 
 # Rebuild index
 python embed.py
@@ -381,11 +384,11 @@ export INSTALOADER_PASS="your_ig_pass"
 # 2. Scrape images
 python scrape.py
 
-# 3. Build embeddings
-python embed.py
-
-# 4. Filter walls
+# 3. Filter walls (remove non-climbing content)
 python filter.py
+
+# 4. Build embeddings
+python embed.py
 
 # 5. Start API (Terminal 1)
 uvicorn api:app --port 8000 &
