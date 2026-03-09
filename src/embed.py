@@ -17,6 +17,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from src.config import load_config, get_path, get_nested
+from src.index import load_frames_index
 from src.logger import setup_logger
 
 log = setup_logger(__name__)
@@ -130,16 +131,29 @@ def main():
     index_file = get_path("index_file")
     embed_file = get_path("embeddings_file")
     faiss_file = get_path("faiss_file")
+    frames_file = index_file.parent / "frames_index.json"
 
-    # โหลด metadata index
-    if not index_file.exists():
-        log.error(f"❌ {index_file} not found. Run scrape.py first.")
-        return
-
-    with open(index_file) as f:
-        metadata = json.load(f)
-
-    log.info(f"📂 {len(metadata)} entries in index")
+    # Load frame-level metadata (new schema) or fall back to gym_index
+    frames = load_frames_index()
+    if frames:
+        log.info(f"📂 {len(frames)} frames in frames_index.json")
+        # Filter out frames that should be skipped (not walls when filter has run)
+        embeddable = [
+            f for f in frames
+            if not f.get("skip_embed", False)
+            and f.get("is_wall") is not False   # None = not yet filtered (include); False = skip
+        ]
+        log.info(f"   Embeddable frames: {len(embeddable)}"
+                 + (f" ({len(frames)-len(embeddable)} skipped — non-wall)" if len(frames) != len(embeddable) else ""))
+        metadata_source = embeddable
+    else:
+        # Fallback: use gym_index.json
+        if not index_file.exists():
+            log.error(f"❌ {index_file} not found. Run scrape.py first.")
+            return
+        with open(index_file) as f:
+            metadata_source = json.load(f)
+        log.info(f"📂 {len(metadata_source)} entries in gym_index.json (fallback)")
 
     # โหลด embeddings cache
     embed_cache: dict[str, np.ndarray] = {}
@@ -148,16 +162,16 @@ def main():
             embed_cache = pickle.load(f)
         log.info(f"   Loaded {len(embed_cache)} cached embeddings")
 
-    # หารูปที่ยังไม่ได้ embed โดยเผื่อกรณีไฟล์มีนามสกุล .jpg ซ้ำซ้อน
+    # Resolve file paths (handle legacy .jpg.jpg double-extension)
     all_paths = []
-    for m in metadata:
+    for m in metadata_source:
         p = Path(m["filename"])
         if p.exists():
             all_paths.append(p)
         elif Path(str(p) + ".jpg").exists():
             all_paths.append(Path(str(p) + ".jpg"))
 
-    pending      = [p for p in all_paths if str(p) not in embed_cache]
+    pending = [p for p in all_paths if str(p) not in embed_cache]
     log.info(f"   Pending: {len(pending)} images to embed")
 
     if pending:
@@ -173,21 +187,38 @@ def main():
             pickle.dump(embed_cache, f)
         log.info(f"✅ Saved embeddings → {embed_file}")
 
-    # Build FAISS index จาก cache
-    valid_paths  = [p for p in all_paths if str(p) in embed_cache]
-    embeddings   = np.stack([embed_cache[str(p)] for p in valid_paths])
-    path_list    = [str(p) for p in valid_paths]  # ordered list สำหรับ lookup
+    # Build FAISS index from cache
+    valid_paths = [p for p in all_paths if str(p) in embed_cache]
+    embeddings  = np.stack([embed_cache[str(p)] for p in valid_paths])
+    path_list   = [str(p) for p in valid_paths]
 
     import faiss
     index = build_faiss_index(embeddings)
     faiss.write_index(index, str(faiss_file))
 
-    # save path_list (เพื่อ map index → filename)
+    # Save path_list (maps faiss_id → filename)
     with open(faiss_file.with_suffix(".paths.json"), "w") as f:
         json.dump(path_list, f)
 
     log.info(f"✅ FAISS index saved → {faiss_file}")
     log.info(f"   Total indexed: {len(path_list)} images")
+
+    # Update frames_index with clip_embedded=true + faiss_id
+    if frames and frames_file.exists():
+        path_to_faiss_id = {p: i for i, p in enumerate(path_list)}
+        updated = 0
+        for frame in frames:
+            fname = frame.get("filename", "")
+            if fname in path_to_faiss_id:
+                frame["clip_embedded"] = True
+                frame["faiss_id"]      = path_to_faiss_id[fname]
+                updated += 1
+            else:
+                frame["clip_embedded"] = False
+                frame["faiss_id"]      = None
+        with open(frames_file, "w", encoding="utf-8") as f:
+            json.dump(frames, f, ensure_ascii=False, indent=2)
+        log.info(f"✅ frames_index updated: {updated} frames marked clip_embedded=true")
 
 
 if __name__ == "__main__":
