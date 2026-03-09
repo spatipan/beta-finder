@@ -2,12 +2,12 @@
 search.py - รับรูปผนัง → return top-K รูปที่คล้ายกันจาก Instagram
 
 Usage:
-    python search.py photo.jpg                      # auto-detect model from index
-    python search.py photo.jpg --top 10             # top 10 results
-    python search.py photo.jpg --gym alpine         # filter by gym
-    python search.py photo.jpg --open               # open results in browser
-    python search.py photo.jpg --backbone dinov2_vitl14  # override with DINOv2
-    python search.py photo.jpg --model EVA02-E-14 --pretrained merged2  # override with EVA-CLIP
+    python search.py photo.jpg                                  # auto-detect model from index
+    python search.py photo.jpg --top 10                         # top 10 results
+    python search.py photo.jpg --gym alpine                     # filter by gym
+    python search.py photo.jpg --open                           # open results in browser
+    python search.py photo.jpg --backbone dinov2_vitl14         # override with DINOv2
+    python search.py photo.jpg --model EVA02-E-14 --pretrained laion2b_s4b_b115k  # override with EVA-CLIP
 """
 
 import json
@@ -77,14 +77,14 @@ def load_clip_model(model_name: str = None, pretrained: str = None, device: str 
     โหลด CLIP-based model via open_clip
 
     Supported models:
-      CLIP:
+      CLIP (OpenAI):
         - "ViT-B-32" + "openai"   → เร็ว, RAM น้อย (~350MB)
         - "ViT-L-14" + "openai"   → แม่นขึ้น (~900MB)
-      SigLIP:
-        - "ViT-L-14" + "webli"    → สมดุล, ดีสำหรับข้อความยาว
-        - "ViT-SO400M-14" + "webli" → ใหญ่, แม่นที่สุด
-      EVA-CLIP:
-        - "EVA02-E-14" + "merged2" → ประสิทธิภาพสูง, รายละเอียดมาก
+      SigLIP (Google):
+        - "ViT-B-16-SigLIP" + "webli"      → เร็ว, สมดุล
+        - "ViT-SO400M-14-SigLIP" + "webli" → ใหญ่, แม่นที่สุด
+      EVA-CLIP (Baidu):
+        - "EVA02-E-14" + "laion2b_s4b_b115k" → ประสิทธิภาพสูง, รายละเอียดมาก
     """
     import open_clip
     import torch
