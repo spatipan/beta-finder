@@ -20,10 +20,10 @@ from pathlib import Path
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import numpy as np
-from PIL import Image
 
 from src.config import load_config, get_path, get_gym_names, get_nested
 from src.logger import setup_logger
+from src.embeddings import load_model, embed_single
 
 log = setup_logger(__name__)
 
@@ -58,98 +58,6 @@ def load_index():
     return index, path_list, meta_by_file, model_metadata
 
 
-def load_model(backbone: str = None, model_name: str = None, pretrained: str = None, device: str = None):
-    """โหลด embedding model (CLIP หรือ DINOv2) - ใช้ร่วมกับ embed.py"""
-    import torch
-
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Determine if using DINOv2 or CLIP
-    if backbone and backbone.startswith("dinov2"):
-        return load_dinov2_model(backbone, device), "dinov2"
-    else:
-        return load_clip_model(model_name, pretrained, device), "clip"
-
-
-def load_clip_model(model_name: str = None, pretrained: str = None, device: str = None):
-    """
-    โหลด CLIP-based model via open_clip
-
-    Supported models:
-      CLIP (OpenAI):
-        - "ViT-B-32" + "openai"   → เร็ว, RAM น้อย (~350MB)
-        - "ViT-L-14" + "openai"   → แม่นขึ้น (~900MB)
-      SigLIP (Google):
-        - "ViT-B-16-SigLIP" + "webli"      → เร็ว, สมดุล
-        - "ViT-SO400M-14-SigLIP" + "webli" → ใหญ่, แม่นที่สุด
-      EVA-CLIP (Baidu):
-        - "EVA02-E-14" + "laion2b_s4b_b115k" → ประสิทธิภาพสูง, รายละเอียดมาก
-    """
-    import open_clip
-    import torch
-
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Use config defaults if not provided
-    if model_name is None:
-        model_name = get_nested("embedding.model_name")
-    if pretrained is None:
-        pretrained = get_nested("embedding.pretrained")
-
-    log.info(f"Loading {model_name} ({pretrained}) on {device}")
-
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        model_name, pretrained=pretrained
-    )
-    model.eval().to(device)
-    return model, preprocess, device
-
-
-def load_dinov2_model(backbone: str, device: str = None):
-    """โหลด DINOv2 model"""
-    import torch
-    import torchvision.transforms as transforms
-
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    log.info(f"Loading DINOv2 {backbone} on {device}")
-
-    # Load DINOv2 model
-    model = torch.hub.load("facebookresearch/dinov2", backbone)
-    model.eval().to(device)
-
-    # DINOv2 preprocess: normalize to ImageNet stats
-    preprocess = transforms.Compose([
-        transforms.Resize((518, 518)),
-        transforms.CenterCrop(518),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                           std=[0.229, 0.224, 0.225])
-    ])
-
-    return model, preprocess, device
-
-
-def embed_query(image_path: Path, model, preprocess, device, model_type: str = "clip") -> np.ndarray:
-    """Embed รูป query 1 รูป (รองรับ CLIP และ DINOv2)"""
-    import torch
-
-    img = Image.open(image_path).convert("RGB")
-    tensor = preprocess(img).unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        if model_type == "clip":
-            feat = model.encode_image(tensor)
-        else:  # dinov2
-            feat = model(tensor)
-        feat = feat / feat.norm(dim=-1, keepdim=True)
-
-    return feat.cpu().numpy().astype("float32")
-
-
 def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
            model_name: str = None, pretrained: str = None, backbone: str = None):
     """
@@ -169,20 +77,15 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
     use_pretrained = pretrained or model_metadata.get("pretrained") or get_nested("search.default_pretrained")
     model_type = model_metadata.get("model_type", "clip")
 
-    # โหลด model (ตรงกับ index)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if use_backbone and use_backbone.startswith("dinov2"):
-        model, preprocess, device = load_dinov2_model(use_backbone, device)
-        model_type = "dinov2"
-    else:
-        model, preprocess, device = load_clip_model(use_model_name, use_pretrained, device)
-        model_type = "clip"
+    # โหลด model (ตรงกับ index) using shared embedding module
+    model, preprocess, device = load_model(use_backbone, use_model_name, use_pretrained)
+    model_type = "dinov2" if use_backbone and use_backbone.startswith("dinov2") else "clip"
 
     log.info(f"Using {model_type.upper()} model for embedding")
 
-    # Embed query
+    # Embed query using shared embedding module
     log.info(f"🔍 Searching for: {query_path}")
-    query_embed = embed_query(query_path, model, preprocess, device, model_type=model_type)
+    query_embed = embed_single(query_path, model, preprocess, device, model_type=model_type)
 
     # Search with oversample factor from config
     oversample_factor = get_nested("search.oversample_factor")
