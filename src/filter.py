@@ -13,12 +13,14 @@ Usage:
     python filter.py --rebuild          # Re-score all images
     python filter.py --threshold 0.3    # Use custom threshold
     python filter.py --model ViT-L-14   # Use more accurate model
+    python filter.py --stats            # Show score distribution and recommend threshold
 """
 
 import json
 import torch
 import open_clip
 import argparse
+import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from typing import Dict, List, Tuple, Optional
@@ -156,6 +158,126 @@ def save_filter_cache(cache: Dict[str, float]):
     log.debug(f"Saved cache with {len(cache)} entries")
 
 
+def analyze_score_distribution(scores: List[float]) -> Dict:
+    """
+    Analyze distribution of wall scores and recommend threshold
+    
+    Args:
+        scores: List of wall scores
+        
+    Returns:
+        Dictionary with statistics and recommended threshold
+    """
+    scores_array = np.array(scores)
+    
+    # Basic statistics
+    stats = {
+        'count': len(scores),
+        'mean': float(np.mean(scores_array)),
+        'median': float(np.median(scores_array)),
+        'std': float(np.std(scores_array)),
+        'min': float(np.min(scores_array)),
+        'max': float(np.max(scores_array)),
+    }
+    
+    # Percentiles
+    percentiles = [5, 10, 25, 50, 75, 90, 95]
+    stats['percentiles'] = {
+        p: float(np.percentile(scores_array, p)) 
+        for p in percentiles
+    }
+    
+    # Histogram bins
+    hist, bin_edges = np.histogram(scores_array, bins=20)
+    stats['histogram'] = {
+        'counts': hist.tolist(),
+        'edges': bin_edges.tolist()
+    }
+    
+    # Recommend threshold using Otsu's method (bimodal separation)
+    # Sort scores and find threshold that maximizes between-class variance
+    sorted_scores = np.sort(scores_array)
+    best_threshold = stats['median']
+    max_variance = 0
+    
+    # Test thresholds at every 5th percentile
+    for i in range(10, 90, 5):
+        threshold = np.percentile(scores_array, i)
+        below = scores_array[scores_array <= threshold]
+        above = scores_array[scores_array > threshold]
+        
+        if len(below) > 0 and len(above) > 0:
+            # Between-class variance
+            w_below = len(below) / len(scores_array)
+            w_above = len(above) / len(scores_array)
+            var_between = w_below * w_above * (np.mean(below) - np.mean(above)) ** 2
+            
+            if var_between > max_variance:
+                max_variance = var_between
+                best_threshold = threshold
+    
+    stats['recommended_threshold'] = float(best_threshold)
+    
+    # Alternative recommendations
+    stats['conservative_threshold'] = float(np.percentile(scores_array, 25))  # Keep more images
+    stats['aggressive_threshold'] = float(np.percentile(scores_array, 75))    # Filter more aggressively
+    
+    return stats
+
+
+def print_distribution_stats(stats: Dict, current_threshold: float = None):
+    """Pretty print score distribution statistics"""
+    log.info("=" * 60)
+    log.info("  SCORE DISTRIBUTION ANALYSIS")
+    log.info("=" * 60)
+    log.info(f"Total images: {stats['count']}")
+    log.info(f"Score range: [{stats['min']:.3f}, {stats['max']:.3f}]")
+    log.info(f"Mean: {stats['mean']:.3f}")
+    log.info(f"Median: {stats['median']:.3f}")
+    log.info(f"Std Dev: {stats['std']:.3f}")
+    log.info("")
+    
+    log.info("Percentiles:")
+    for p, val in stats['percentiles'].items():
+        log.info(f"  {p:>3}%: {val:>6.3f}")
+    log.info("")
+    
+    # ASCII histogram
+    log.info("Score Distribution (histogram):")
+    hist_counts = stats['histogram']['counts']
+    hist_edges = stats['histogram']['edges']
+    max_count = max(hist_counts) if hist_counts else 1
+    
+    for i, count in enumerate(hist_counts):
+        bin_start = hist_edges[i]
+        bin_end = hist_edges[i + 1]
+        bar_length = int(40 * count / max_count) if max_count > 0 else 0
+        bar = '█' * bar_length
+        log.info(f"  [{bin_start:>5.2f}, {bin_end:>5.2f}): {bar} {count}")
+    log.info("")
+    
+    # Threshold recommendations
+    log.info("=" * 60)
+    log.info("  THRESHOLD RECOMMENDATIONS")
+    log.info("=" * 60)
+    log.info(f"🎯 Recommended (Otsu): {stats['recommended_threshold']:.3f}")
+    log.info(f"   (Maximizes separation between walls/non-walls)")
+    log.info("")
+    log.info(f"🛡️  Conservative: {stats['conservative_threshold']:.3f}")
+    log.info(f"   (Keeps more images, fewer false negatives)")
+    log.info("")
+    log.info(f"⚡ Aggressive: {stats['aggressive_threshold']:.3f}")
+    log.info(f"   (Filters more strictly, fewer false positives)")
+    log.info("")
+    
+    if current_threshold is not None:
+        log.info(f"Current threshold: {current_threshold:.3f}")
+        below_current = sum(1 for s in stats['histogram']['counts'][:10])
+        log.info(f"  → Would classify ~{100 * (1 - current_threshold):.1f}% as walls")
+    
+    log.info("=" * 60)
+
+
 def filter_images(
     metadata: List[dict],
     cache: Dict[str, float],
@@ -224,6 +346,8 @@ def main():
                         help="Batch size for processing")
     parser.add_argument("--dry-run", action="store_true",
                         help="Score images but don't update index")
+    parser.add_argument("--stats", action="store_true",
+                        help="Show score distribution and recommend threshold")
 
     args = parser.parse_args()
 
@@ -274,6 +398,12 @@ def main():
         metadata, cache, model, preprocess, device, text_embeds,
         threshold, rebuild=args.rebuild
     )
+
+    # Show statistics if requested
+    if args.stats:
+        scores = [m.get("wall_score", 0.0) for m in updated_metadata]
+        stats = analyze_score_distribution(scores)
+        print_distribution_stats(stats, current_threshold=threshold)
 
     # Save cache
     log.info("Saving cache...")
