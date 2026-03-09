@@ -476,7 +476,7 @@ uvicorn api:app --port 8001
 lsof -ti :8000 | xargs kill -9
 ```
 
-See [CLI_GUIDE.md](./CLI_GUIDE.md) for more troubleshooting tips.
+See [CLI_GUIDE.md](./CLI_GUIDE.md) for more troubleshooting tips and [UV_GUIDE.md](./UV_GUIDE.md) for dependency management details.
 
 ---
 
