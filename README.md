@@ -110,11 +110,17 @@ Instagram Scraping (official + contributors + tagged posts)
     ↓
 [scrape.py] → downloads images, captions, dates, extract keyframes from Reels
     ↓
-Local Images + Metadata (source_type, media_type, keyframe_index)
+gym_index.json (1,223 flat file-level records)
+    ↓
+[migrate_index.py] → Two-level schema migration (non-destructive)
+    ├── posts_index.json (284 Instagram posts, 1 per shortcode)
+    └── frames_index.json (1,223 frames, FK=shortcode)
+    ↓
+[filter.py] → Classify walls vs. non-walls (zero-shot CLIP)
+    ↓ (propagates is_wall, wall_score to frames_index)
     ↓
 [embed.py] → CLIP embeddings (ViT-B-32 or ViT-L-14)
-    ↓
-[filter.py] → classify walls vs. non-walls (optional)
+    ↓ (writes clip_embedded, faiss_id to frames_index)
     ↓
 FAISS Index + Metadata → Ready for search
 ```
@@ -124,15 +130,20 @@ FAISS Index + Metadata → Ready for search
 ```
 beta-finder-cnx/
 ├── src/
-│   ├── scrape.py       # Instagram image scraper (with keyframe extraction)
-│   ├── embed.py        # CLIP embeddings + FAISS indexing
-│   ├── search.py       # Similarity search function
-│   ├── filter.py       # Wall classification (zero-shot)
-│   ├── update.py       # Auto-update pipeline
-│   ├── discover.py     # Snowball account discovery (BFS + @mentions)
-│   ├── feedback.py     # Feedback loop for fine-tuning
-│   ├── config.py       # Config loader
-│   └── logger.py       # Logging setup
+│   ├── scrape.py         # Instagram image scraper (with keyframe extraction)
+│   ├── embed.py          # CLIP embeddings + FAISS indexing
+│   ├── search.py         # Similarity search function
+│   ├── filter.py         # Wall classification (zero-shot)
+│   ├── update.py         # Auto-update pipeline
+│   ├── discover.py       # Snowball account discovery (BFS + @mentions)
+│   ├── feedback.py       # Feedback loop for fine-tuning
+│   ├── config.py         # Config loader
+│   ├── logger.py         # Logging setup
+│   ├── index.py          # Index loading/saving helpers (two-level schema)
+│   ├── deduplication.py  # Post deduplication utilities
+│   ├── migrate_index.py  # Schema migration (gym_index → posts/frames indexes)
+│   └── utils/
+│       └── image_utils.py # Image loading utilities
 │
 ├── src/ui/
 │   ├── App.jsx         # React main component
@@ -148,13 +159,16 @@ beta-finder-cnx/
 │   ├── images/
 │   │   ├── official/{alpine|mainwall|progression}/
 │   │   └── contributor/{username}/
-│   ├── gym_index.json      # Image metadata
-│   ├── contributors.json   # Community contributors list
-│   ├── feedback.json       # User feedback (for fine-tuning)
-│   ├── graph.json          # Account mention graph (discovery)
-│   ├── faiss.index         # FAISS vector index (binary)
-│   └── faiss.paths.json    # Image path list for index lookup
+│   ├── gym_index.json        # Image metadata (source of truth, 1,223 records)
+│   ├── posts_index.json      # Post-level index (284 posts)
+│   ├── frames_index.json     # Frame-level index (1,223 frames, FK=shortcode)
+│   ├── contributors.json     # Community contributors list
+│   ├── feedback.json         # User feedback (for fine-tuning)
+│   ├── graph.json            # Account mention graph (discovery)
+│   ├── faiss.index           # FAISS vector index (binary)
+│   └── faiss.paths.json      # Image path list for index lookup
 │
+├── migrate_index.py    # CLI wrapper: one-time migration script
 ├── requirements.txt    # Python dependencies
 ├── package.json        # Node dependencies
 ├── vite.config.js      # Vite configuration
@@ -179,6 +193,7 @@ beta-finder-cnx/
 - **Snowball Discovery** — Auto-discover new beta creators via BFS + @mention extraction
 - **Full-Stack UI** — React + Vite frontend + FastAPI backend (HEIC support)
 - **Comprehensive Docs** — CLI_GUIDE.md with all commands and workflows
+- **Two-Level Schema** — Non-destructive migration (gym_index → posts/frames indexes) for better data organization
 
 ### Phase 3 🔜 Advanced
 - **Fine-tuning** — Retrain CLIP on climbing-specific feedback pairs (200+ required)
