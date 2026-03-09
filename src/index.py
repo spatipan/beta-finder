@@ -1,13 +1,15 @@
 """
-Index helpers for BetaFinder — load and join post/frame indexes.
+Index helpers for BetaFinder — load, save, and join post/frame indexes.
 
 Supports both old (gym_index.json) and new (posts_index + frames_index) schemas.
-All functions are read-only.
 """
 
 import json
 from pathlib import Path
 from src.config import get_path
+from src.logger import setup_logger
+
+log = setup_logger(__name__)
 
 
 def load_gym_index() -> list[dict]:
@@ -98,20 +100,19 @@ def join_post_frame(posts: list[dict], frames: list[dict]) -> dict[str, dict]:
     return result
 
 
-def get_frame_post_context(shortcode: str, posts: list[dict]) -> dict | None:
+def save_frames_index(frames: list[dict]) -> Path:
     """
-    Get post-level context for a specific frame.
+    Save frames_index.json to disk.
 
-    Helper for when you have a frame's shortcode and want post metadata.
+    Centralizes the JSON write pattern used by embed.py and filter.py.
 
     Args:
-        shortcode: Instagram post ID
-        posts: List of post records (from load_posts_index)
+        frames: List of frame records to save
 
     Returns:
-        Post record if found, None otherwise
+        Path to saved file
     """
-    for post in posts:
-        if post["shortcode"] == shortcode:
-            return post
-    return None
+    frames_file = _data_root() / "frames_index.json"
+    with open(frames_file, "w", encoding="utf-8") as f:
+        json.dump(frames, f, ensure_ascii=False, indent=2)
+    return frames_file

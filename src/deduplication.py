@@ -63,25 +63,3 @@ def build_shortcode_set_per_account(index_dict: list[dict]) -> dict[str, set[str
         if username and shortcode:
             result.setdefault(username, set()).add(shortcode)
     return result
-
-
-def is_already_scraped(shortcode: str, scraped_set: set[str]) -> bool:
-    """
-    Check if a post has already been scraped.
-
-    Args:
-        shortcode: Instagram post ID
-        scraped_set: Set of known shortcodes (from load_post_shortcodes or
-                     build_shortcode_set_per_account(...).get(username, set()))
-
-    Returns:
-        True if shortcode is in the scraped_set, False otherwise
-
-    Example:
-        >>> scraped = {"ABC123", "DEF456"}
-        >>> is_already_scraped("ABC123", scraped)
-        True
-        >>> is_already_scraped("NEW789", scraped)
-        False
-    """
-    return shortcode in scraped_set

@@ -24,7 +24,7 @@ from tqdm import tqdm
 from typing import Dict, List, Tuple, Optional
 
 from src.config import load_config, get_path, get_nested
-from src.index import load_frames_index
+from src.index import load_frames_index, save_frames_index
 from src.logger import setup_logger
 from src.utils.image_utils import load_image_safe
 
@@ -287,7 +287,6 @@ def main():
             json.dump(updated_metadata, f, ensure_ascii=False, indent=2)
 
         # Also update frames_index.json if it exists
-        frames_file = index_path.parent / "frames_index.json"
         frames = load_frames_index()
         if frames:
             # Build lookup: filename → wall scores from updated gym_index
@@ -302,8 +301,7 @@ def main():
                     frame["is_wall"]   = score_by_file[fname]["is_wall"]
                     frame["wall_score"] = score_by_file[fname]["wall_score"]
                     f_updated += 1
-            with open(frames_file, "w", encoding="utf-8") as f:
-                json.dump(frames, f, ensure_ascii=False, indent=2)
+            save_frames_index(frames)
             log.info(f"✅ frames_index.json updated: {f_updated} frames with wall scores")
     else:
         log.info("(Dry-run mode — not updating index)")

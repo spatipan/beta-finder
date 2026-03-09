@@ -17,7 +17,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from src.config import load_config, get_path, get_nested
-from src.index import load_frames_index
+from src.index import load_frames_index, save_frames_index
 from src.logger import setup_logger
 
 log = setup_logger(__name__)
@@ -216,8 +216,7 @@ def main():
             else:
                 frame["clip_embedded"] = False
                 frame["faiss_id"]      = None
-        with open(frames_file, "w", encoding="utf-8") as f:
-            json.dump(frames, f, ensure_ascii=False, indent=2)
+        save_frames_index(frames)
         log.info(f"✅ frames_index updated: {updated} frames marked clip_embedded=true")
 
 
