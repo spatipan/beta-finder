@@ -67,6 +67,7 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
     Returns: list of dicts ที่มี filename, gym, url, score, caption
 
     Automatically uses the same model as the index, unless overridden by arguments
+    Deduplicates results by Instagram shortcode (same post → only one result)
     """
     import torch
 
@@ -105,12 +106,22 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
     caption_max_length = get_nested("search.caption_max_length")
 
     results = []
+    seen_shortcodes = set()  # Track shortcodes to deduplicate
+
     for score, idx in zip(scores[0], indices[0]):
         if idx < 0 or idx >= len(path_list):
             continue
 
         filename = path_list[idx]
         meta     = meta_by_file.get(filename, {})
+
+        # Deduplicate by shortcode (same Instagram post)
+        shortcode = meta.get("shortcode")
+        if shortcode and shortcode in seen_shortcodes:
+            log.debug(f"Skip duplicate shortcode {shortcode}")
+            continue
+        if shortcode:
+            seen_shortcodes.add(shortcode)
 
         # filter by gym ถ้าระบุ
         if gym_filter and meta.get("gym") != gym_filter:
