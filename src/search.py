@@ -67,7 +67,12 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
     Returns: list of dicts ที่มี filename, gym, url, score, caption
 
     Automatically uses the same model as the index, unless overridden by arguments
-    Deduplicates results by Instagram shortcode (same post → only one result)
+
+    Deduplication strategy:
+    - Groups results by Instagram shortcode (same post)
+    - Per shortcode, keeps ONE best match (prefers images tagged with a gym)
+    - If multiple images from same post have same gym status: keeps highest score
+    - Results sorted by score (descending) to maintain ranking
     """
     import torch
 
@@ -106,8 +111,9 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
     caption_max_length = get_nested("search.caption_max_length")
 
     results = []
-    seen_shortcodes = set()  # Track shortcodes to deduplicate
+    shortcode_candidates = {}  # Map shortcode → (score, metadata, filename)
 
+    # First pass: collect best candidate per shortcode
     for score, idx in zip(scores[0], indices[0]):
         if idx < 0 or idx >= len(path_list):
             continue
@@ -115,18 +121,31 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
         filename = path_list[idx]
         meta     = meta_by_file.get(filename, {})
 
-        # Deduplicate by shortcode (same Instagram post)
-        shortcode = meta.get("shortcode")
-        if shortcode and shortcode in seen_shortcodes:
-            log.debug(f"Skip duplicate shortcode {shortcode}")
-            continue
-        if shortcode:
-            seen_shortcodes.add(shortcode)
-
         # filter by gym ถ้าระบุ
         if gym_filter and meta.get("gym") != gym_filter:
             continue
 
+        shortcode = meta.get("shortcode")
+        has_gym = bool(meta.get("gym"))
+
+        # Track candidates by shortcode, preferring ones with gym specified
+        if shortcode:
+            if shortcode not in shortcode_candidates:
+                shortcode_candidates[shortcode] = (score, meta, filename, has_gym)
+            else:
+                existing_score, existing_meta, existing_file, existing_has_gym = shortcode_candidates[shortcode]
+
+                # Prefer: has_gym > no_gym, then higher score
+                if has_gym and not existing_has_gym:
+                    # Replace: new one has gym, old one doesn't
+                    shortcode_candidates[shortcode] = (score, meta, filename, has_gym)
+                elif has_gym == existing_has_gym and score > existing_score:
+                    # Same gym status, prefer higher score
+                    shortcode_candidates[shortcode] = (score, meta, filename, has_gym)
+                # else: keep existing (either it has gym and new doesn't, or same gym status but lower score)
+
+    # Second pass: convert candidates to final results
+    for shortcode, (score, meta, filename, has_gym) in shortcode_candidates.items():
         caption_text = meta.get("caption", "")
         if caption_text:
             caption_text = caption_text[:caption_max_length] + "..."
@@ -143,6 +162,11 @@ def search(query_path: Path, top_k: int = 5, gym_filter: str | None = None,
 
         if len(results) >= top_k:
             break
+
+    # Sort by score (descending) to maintain ranking order
+    results.sort(key=lambda x: x["score"], reverse=True)
+    for i, r in enumerate(results, 1):
+        r["rank"] = i
 
     return results
 
