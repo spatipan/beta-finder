@@ -24,16 +24,19 @@ def load_gym_index() -> list[dict]:
         return json.load(f)
 
 
+def _data_root() -> Path:
+    """Derive the data/ root dir from the index_file path (data/gym_index.json → data/)."""
+    return get_path("index_file").parent
+
+
 def load_posts_index() -> list[dict]:
     """Load posts index (new schema).
 
     Returns:
         List of post-level records (1 per Instagram post)
         Empty list if file doesn't exist yet (before migration)
-
-    Returns empty list if not migrated yet.
     """
-    posts_file = get_path("data_dir") / "posts_index.json"
+    posts_file = _data_root() / "posts_index.json"
     if not posts_file.exists():
         return []
     with open(posts_file, "r", encoding="utf-8") as f:
@@ -46,10 +49,8 @@ def load_frames_index() -> list[dict]:
     Returns:
         List of frame-level records (N per post, 1 per image/keyframe)
         Empty list if file doesn't exist yet (before migration)
-
-    Returns empty list if not migrated yet.
     """
-    frames_file = get_path("data_dir") / "frames_index.json"
+    frames_file = _data_root() / "frames_index.json"
     if not frames_file.exists():
         return []
     with open(frames_file, "r", encoding="utf-8") as f:
