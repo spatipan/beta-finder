@@ -368,7 +368,7 @@ def main():
                         help="เพิ่ม contributor (ใช้ร่วมกับ --note และ --gyms-tag)")
     parser.add_argument("--note",      default="",
                         help="หมายเหตุสำหรับ contributor ใหม่")
-    parser.add_argument("--gyms-tag",  nargs="+", choices=list(GYMS.keys()),
+    parser.add_argument("--gyms-tag",  nargs="+", choices=get_gym_names(),
                         help="ยิมที่ contributor นี้ปีน")
     parser.add_argument("--list-contributors", action="store_true",
                         help="แสดงรายชื่อ contributors ทั้งหมด")
