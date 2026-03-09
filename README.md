@@ -48,8 +48,15 @@ export INSTALOADER_PASS="your_password"
 # Scrape images from gyms + contributors + tagged posts
 python scrape.py
 
-# Build CLIP embeddings & FAISS index
+# Build embeddings & FAISS index
+# Default: CLIP ViT-B-32
 python embed.py
+
+# Or use other embedding methods (see Embedding Methods below)
+python embed.py --model ViT-L-14 --pretrained openai      # CLIP ViT-L-14
+python embed.py --backbone dinov2_vitb14                  # DINOv2 ViT-B-14
+python embed.py --backbone superpoint                     # SuperPoint+SuperGlue (GPU)
+python embed.py --backbone sift                           # SIFT (CPU, no GPU needed)
 
 # Optional: Filter to keep only climbing walls
 python filter.py
@@ -125,8 +132,9 @@ FAISS Index + Metadata → Ready for search
 beta-finder-cnx/
 ├── src/
 │   ├── scrape.py       # Instagram image scraper (with keyframe extraction)
-│   ├── embed.py        # CLIP embeddings + FAISS indexing
-│   ├── search.py       # Similarity search function
+│   ├── embed.py        # Embeddings + FAISS indexing
+│   ├── embeddings.py   # Shared embedding functions (CLIP, DINOv2, SIFT, SuperPoint)
+│   ├── search.py       # Similarity search function (auto-detects model)
 │   ├── filter.py       # Wall classification (zero-shot)
 │   ├── update.py       # Auto-update pipeline
 │   ├── discover.py     # Snowball account discovery (BFS + @mentions)
@@ -153,7 +161,8 @@ beta-finder-cnx/
 │   ├── feedback.json       # User feedback (for fine-tuning)
 │   ├── graph.json          # Account mention graph (discovery)
 │   ├── faiss.index         # FAISS vector index (binary)
-│   └── faiss.paths.json    # Image path list for index lookup
+│   ├── faiss.paths.json    # Image path list for index lookup
+│   └── faiss.model.json    # Model metadata (auto-detected by search.py)
 │
 ├── requirements.txt    # Python dependencies
 ├── package.json        # Node dependencies
@@ -167,8 +176,8 @@ beta-finder-cnx/
 ## ✨ Features
 
 ### Phase 1 ✅ Core Search
-- **CLIP Image Embeddings** — ViT-B-32 (fast) or ViT-L-14 (accurate)
-- **FAISS Vector Index** — Fast similarity search
+- **Multiple Embedding Methods** — CLIP, SigLIP, EVA-CLIP, DINOv2, SIFT, SuperPoint+SuperGlue
+- **FAISS Vector Index** — Fast similarity search with automatic model matching
 - **Instagram Scraping** — Official gyms + community contributors
 - **CLI Tools** — scrape, embed, search, filter, update, discover
 
@@ -196,10 +205,14 @@ beta-finder-cnx/
 # 1. Scrape images (all sources: official + contributors + tagged)
 python scrape.py
 
-# 2. Build embeddings & index
-python embed.py
+# 2. Build embeddings & index (choose one embedding method)
+python embed.py                          # Default: CLIP ViT-B-32
+# python embed.py --model ViT-L-14 --pretrained openai  # CLIP ViT-L-14 (better accuracy)
+# python embed.py --backbone dinov2_vitb14              # DINOv2 (texture/structure)
+# python embed.py --backbone superpoint                 # SuperPoint (GPU, best localization)
+# python embed.py --backbone sift                       # SIFT (CPU-only)
 
-# 3. Search via CLI
+# 3. Search via CLI (automatically uses same model as index)
 python search.py wall_photo.jpg --top 5
 
 # OR start the full-stack app:
@@ -294,12 +307,67 @@ Serve local image thumbnails (max 800x600px).
 
 ---
 
+## 🧠 Embedding Methods
+
+BetaFinder supports 6 different embedding methods with different speed/accuracy trade-offs:
+
+| Method | Type | Dim | Speed | Accuracy | GPU | Notes |
+|--------|------|-----|-------|----------|-----|-------|
+| **CLIP ViT-B-32** | Semantic | 512 | ⚡⚡⚡ | ⭐⭐⭐ | Optional | Default, fast & accurate |
+| **CLIP ViT-L-14** | Semantic | 768 | ⚡⚡ | ⭐⭐⭐⭐ | Optional | Better accuracy, slower |
+| **SigLIP ViT-B-16** | Semantic | 512 | ⚡⚡⚡ | ⭐⭐⭐⭐ | Optional | Competitive with CLIP |
+| **EVA-CLIP E-14** | Semantic | 1024 | ⚡ | ⭐⭐⭐⭐⭐ | Optional | Highest accuracy, slowest |
+| **DINOv2 ViT-B-14** | Self-supervised | 768 | ⚡⚡ | ⭐⭐⭐ | Recommended | Good for texture/structure |
+| **SIFT** | Local features | 128* | ⚡⚡ | ⭐⭐ | None | CPU-only, traditional CV |
+| **SuperPoint+SuperGlue** | Local features | 256* | ⚡ | ⭐⭐⭐ | Required | GPU accelerated, best localization |
+
+*Fixed to 128-dim and 256-dim via mean aggregation of variable-length descriptors
+
+### Usage
+
+```bash
+# CLIP models (semantic embeddings)
+python embed.py                                    # ViT-B-32 (default, fast)
+python embed.py --model ViT-L-14 --pretrained openai  # ViT-L-14 (accurate)
+
+# SigLIP models (better than CLIP, open-source)
+python embed.py --model ViT-B-16-SigLIP --pretrained webli
+python embed.py --model ViT-SO400M-14-SigLIP --pretrained webli  # Largest, slowest
+
+# EVA-CLIP (highest accuracy semantic embeddings)
+python embed.py --model EVA02-E-14 --pretrained laion2b_s4b_b115k
+
+# DINOv2 (self-supervised, good for texture/structure)
+python embed.py --backbone dinov2_vitb14
+python embed.py --backbone dinov2_vitl14         # Larger model
+
+# SIFT (CPU-only, traditional computer vision)
+python embed.py --backbone sift
+
+# SuperPoint+SuperGlue (GPU required, best for precise localization)
+python embed.py --backbone superpoint            # Falls back to SIFT on CPU-only
+```
+
+### Automatic Model Detection
+
+When you run `search.py`, it automatically detects which model was used to build the index and loads the matching model. This ensures consistency:
+
+```bash
+# search.py will automatically use the same model that built the index
+python search.py wall_photo.jpg --top 5
+
+# Or override the model if needed (expert use)
+python search.py wall_photo.jpg --model ViT-L-14 --pretrained openai
+```
+
+---
+
 ## ⚙️ Configuration
 
 See `config/config.yaml` for:
 - Gym Instagram handles
 - Scraping modes (official, contributors, tagged posts)
-- CLIP model selection (ViT-B-32, ViT-L-14)
+- Default embedding model (can override via CLI)
 - Data paths
 - Keyframe extraction settings
 - Discovery parameters
@@ -329,9 +397,29 @@ export INSTALOADER_PASS="your_password"
 python scrape.py
 ```
 
-**FAISS dimension mismatch:**
+**FAISS dimension mismatch (embedding vector sizes don't match):**
 ```bash
+# Rebuild index with consistent model
 python embed.py --rebuild
+```
+
+**SuperPoint not available (kornia-moons missing):**
+```bash
+pip install kornia-moons
+# Falls back to SIFT automatically if CUDA not available
+```
+
+**Out of memory during embedding:**
+```bash
+# Reduce batch size (default: auto-detected)
+python embed.py --batch 8
+```
+
+**Model mismatch between embed and search:**
+```bash
+# Automatic detection: search.py reads faiss.model.json
+# If mismatch occurs, rebuild:
+python embed.py --rebuild --model ViT-L-14 --pretrained openai
 ```
 
 **Port already in use:**
