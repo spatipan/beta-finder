@@ -26,6 +26,7 @@ import itertools
 from pathlib import Path
 
 from src.config import load_config, get_path, get_gym_names, get_instagram_handle, get_nested
+from src.migrate_index import migrate as _migrate_index
 from src.logger import setup_logger
 
 log = setup_logger(__name__)
@@ -594,6 +595,9 @@ def main():
                 scraped_by_account.setdefault(m.get("username", ""), set()).add(m["shortcode"])
 
     save_index(all_metadata)
+
+    # Regenerate two-level schema indexes from updated gym_index.json
+    _migrate_index()
 
     official_n    = sum(1 for m in all_metadata if m["source_type"] == "official")
     contributor_n = sum(1 for m in all_metadata if m["source_type"] == "contributor")
