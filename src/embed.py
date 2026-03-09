@@ -1,5 +1,5 @@
 """
-embed.py - สร้าง embeddings (CLIP, SigLIP, EVA-CLIP, หรือ DINOv2) สำหรับรูปทั้งหมด
+embed.py - สร้าง embeddings (CLIP, SigLIP, EVA-CLIP, DINOv2, หรือ SIFT) สำหรับรูปทั้งหมด
 และ build vector index สำหรับ similarity search
 
 Usage:
@@ -9,6 +9,7 @@ Usage:
     python embed.py --model ViT-SO400M-14-SigLIP --pretrained webli  # SigLIP ViT-SO400M-14 (largest)
     python embed.py --model EVA02-E-14 --pretrained laion2b_s4b_b115k  # EVA-CLIP E-14
     python embed.py --backbone dinov2_vitb14                   # DINOv2 ViT-B14
+    python embed.py --backbone sift                             # SIFT (no GPU needed)
     python embed.py --batch 32                                 # ปรับ batch size
 """
 
@@ -105,7 +106,13 @@ def main():
 
     if pending:
         model, preprocess, device = load_model(args.backbone, args.model, args.pretrained)
-        model_type = "dinov2" if args.backbone and args.backbone.startswith("dinov2") else "clip"
+        # Determine model type
+        if args.backbone == "sift" or args.model == "sift":
+            model_type = "sift"
+        elif args.backbone and args.backbone.startswith("dinov2"):
+            model_type = "dinov2"
+        else:
+            model_type = "clip"
         new_embeds = embed_batch(pending, model, preprocess, device, model_type=model_type, batch_size=args.batch)
 
         # Store model metadata for search.py to use matching model
