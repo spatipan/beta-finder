@@ -20,6 +20,14 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 import tempfile
+from PIL import Image
+
+# Register HEIF/HEIC support for PIL on macOS
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
 
 from src.config import load_config, get_path, get_gym_names
 from src.search import search as _search
@@ -59,11 +67,37 @@ async def api_search(
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
 
-    # Save upload to temp file
-    suffix = Path(file.filename).suffix or ".jpg"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(await file.read())
-        tmp_path = Path(tmp.name)
+    # Read file content
+    content = await file.read()
+
+    # Convert HEIC/HEIF to JPG if needed (PIL doesn't natively support HEIC)
+    original_suffix = Path(file.filename).suffix.lower()
+    if original_suffix in (".heic", ".heif"):
+        try:
+            # Write to temp file first, then open with PIL
+            with tempfile.NamedTemporaryFile(suffix=original_suffix, delete=False) as tmp:
+                tmp.write(content)
+                heic_path = Path(tmp.name)
+
+            # Open and convert to RGB
+            img = Image.open(heic_path)
+            img = img.convert("RGB")
+
+            # Save as JPG
+            jpg_tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            img.save(jpg_tmp.name, format="JPEG", quality=95)
+            jpg_tmp.close()
+
+            tmp_path = Path(jpg_tmp.name)
+            heic_path.unlink(missing_ok=True)  # Clean up original
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot process HEIC image: {str(e)}")
+    else:
+        # Save other formats as-is
+        suffix = original_suffix or ".jpg"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
 
     try:
         gym_filter = None if gym == "all" else gym
