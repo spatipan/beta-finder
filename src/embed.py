@@ -141,6 +141,11 @@ def main():
 
     log.info(f"📂 {len(metadata)} entries in index")
 
+    # Filter to only include entries marked as walls (is_wall: true)
+    walls_only = [m for m in metadata if m.get("is_wall", False)]
+    log.info(f"   Filtered to {len(walls_only)} wall entries (is_wall: true)")
+    metadata = walls_only
+
     # โหลด embeddings cache
     embed_cache: dict[str, np.ndarray] = {}
     if embed_file.exists() and not args.rebuild:
