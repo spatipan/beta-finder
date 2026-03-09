@@ -8,22 +8,34 @@ venv/
 .env
 
 # Data and Models
-data/
+data/images/
+data/*.pkl
+data/*.index
 *.pkl
 *.index
-*.json
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Any random test images
-*.jpg
-*.jpeg
-*.png
+# Test images
+test.jpg
+test.jpeg
+test.png
 
-# Doc
-docs/
+# Build & Dependencies
+dist/
+node_modules/
+.vite/
 
-# Claude 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
 .claude/
+
+# notebook
+notebook/
