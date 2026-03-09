@@ -862,7 +862,10 @@ export default function BetaFinder() {
                   </div>
                 </div>
                 <p style={{ fontSize: 13, color: t.textSub, lineHeight: 1.7, marginBottom: 10 }}>
-                  Snap a photo of a route → get ranked Instagram beta posts back instantly. Built for the Chiang Mai climbing community.
+                  Snap a photo of a climbing wall → get ranked Instagram beta posts back instantly. Compare your project with climbs posted by the Chiang Mai gym community.
+                </p>
+                <p style={{ fontSize: 13, color: t.textSub, lineHeight: 1.7, marginBottom: 10 }}>
+                  Made with 🤍 and lots of 🧗‍♂️ (and chalk dust) by the Chiang Mai climbing community.
                 </p>
                 <p style={{ fontSize: 13, color: t.textSub, lineHeight: 1.7 }}>
                   Inspired by the original{" "}
@@ -871,7 +874,8 @@ export default function BetaFinder() {
                 </p>
               </div>
 
-              <div className="su1" style={{
+              {/* Tech Stack (hidden for now — uncomment to show) */}
+              {/* <div className="su1" style={{
                 background: t.bgCard, borderRadius: 16,
                 border: `1.5px solid ${t.border}`, overflow: "hidden",
                 boxShadow: "0 1px 8px rgba(0,0,0,0.05)",
@@ -895,9 +899,9 @@ export default function BetaFinder() {
                     <span style={{ fontSize: 12, color: c, fontWeight: 600 }}>{v}</span>
                   </div>
                 ))}
-              </div>
+              </div> */
 
-              <div className="su2" style={{ display: "flex", gap: 10 }}>
+              <div className="su1" style={{ display: "flex", gap: 10 }}>
                 {[
                   { lbl: "GitHub", href: "https://github.com/spatipan/beta-finder", c: t.textSub },
                   { lbl: "@patipan_poty", href: "https://instagram.com/patipan_poty", c: t.orange },
@@ -905,14 +909,14 @@ export default function BetaFinder() {
                 ].map(link => (
                   <a key={link.lbl} href={link.href} target="_blank" rel="noopener noreferrer"
                     style={{
-                      flex: 1, textAlign: "center", padding: "10px 6px",
+                      flex: 1, textAlign: "center", padding: "12px 10px",
                       borderRadius: 10, border: `1.5px solid ${t.border}`,
                       background: t.bgSubtle, color: link.c,
                       fontSize: 11, fontWeight: 700, textDecoration: "none",
-                      transition: "border-color .15s",
+                      transition: "border-color .15s, background .15s",
                     }}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = link.c}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = t.border}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = link.c; e.currentTarget.style.background = link.c + "08"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = t.border; e.currentTarget.style.background = t.bgSubtle; }}
                   >{link.lbl}</a>
                 ))}
               </div>
