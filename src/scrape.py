@@ -187,22 +187,31 @@ def get_loader():
     return L
 
 
+import os
+from PIL import Image
+
 def scrape_account(username, source_type, source_key,
                    limit=100, delay=2.0, loader=None, scrape_mode="posts",
-                   gym_tags=None):
+                   gym_tags=None, scraped_shortcodes: set = None):
     """
     Scrape รูปจาก 1 Instagram account
     บันทึกลง data/images/{source_type}/{source_key}/
 
-    source_type: "official" | "contributor"
-    source_key:  gym key (เช่น "alpine") หรือ username (สำหรับ contributor)
-    scrape_mode: "posts" (account's own) | "tagged" (posts tagged by others) | "both"
+    source_type:       "official" | "contributor"
+    source_key:        gym key (เช่น "alpine") หรือ username (สำหรับ contributor)
+    scrape_mode:       "posts" (account's own) | "tagged" (posts tagged by others) | "both"
+    scraped_shortcodes: set of post shortcodes already in the index — skip them entirely
     """
     if source_type == "official":
         out_dir = get_path("official_dir") / source_key
     else:
         out_dir = get_path("contributors_dir") / source_key
-    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not out_dir.exists():
+        log.info(f"ℹ️  Creating directory: {out_dir}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        log.info(f"ℹ️  Directory already exists: {out_dir}")
 
     icon = "🔖" if source_type == "official" else "👤"
     log.info(f"{icon} [{source_type.upper()}] Scraping @{username} → {out_dir}")
@@ -210,6 +219,8 @@ def scrape_account(username, source_type, source_key,
     L = loader or get_loader()
     metadata = []
     count = 0
+    skipped = 0
+    already_scraped = scraped_shortcodes or set()
 
     # Load beta keywords from config
     cfg = load_config()
@@ -227,17 +238,130 @@ def scrape_account(username, source_type, source_key,
     kf_skip_pct = kf_cfg.get("skip_pct", 0.05)
     kf_delete_video = kf_cfg.get("delete_video", True)
 
+    def is_valid_image(filepath):
+        """ตรวจสอบว่าไฟล์รูปภาพ valid และมีขนาดมากกว่า 0"""
+        try:
+            if not filepath.exists():
+                return False
+            if filepath.stat().st_size == 0:
+                log.warning(f"   ⚠️  Empty file detected: {filepath.name}")
+                return False
+            # ลอง open ด้วย PIL เพื่อ verify
+            with Image.open(filepath) as img:
+                img.verify()
+            return True
+        except Exception as e:
+            log.warning(f"   ⚠️  Invalid image {filepath.name}: {e}")
+            return False
+
+    def _download_and_process_video(post, base_meta):
+        nonlocal count
+        video_path = out_dir / f"{post.shortcode}.mp4"
+                
+        if not video_path.exists():
+            try:
+                old_dirname = L.dirname_pattern
+                old_filename = getattr(L, 'filename_pattern', '{date_utc}_UTC')
+                # bypass instaloader target path sanitization (which replaces / with ∕)
+                L.dirname_pattern = str(out_dir).replace("{", "{{").replace("}", "}}")
+                L.filename_pattern = "{shortcode}"
+                L.download_post(post, target="")
+                L.dirname_pattern = old_dirname
+                L.filename_pattern = old_filename
+
+                # instaloader saves as {shortcode}.mp4 — find it
+                mp4_files = list(out_dir.glob(f"{post.shortcode}*.mp4"))
+                if mp4_files:
+                    video_path = mp4_files[0]
+                else:
+                    log.warning(f"   ⚠️  Video file not found after download: {post.shortcode}")
+                    return
+            except Exception as e:
+                log.warning(f"   ⚠️  Video download failed {post.shortcode}: {e}")
+                return
+
+        if video_path.exists():
+            keyframes = extract_keyframes(video_path, kf_n_frames, kf_skip_pct)
+                    
+            if kf_delete_video:
+                video_path.unlink(missing_ok=True)
+                # Clean up instaloader's metadata JSON files
+                for json_file in out_dir.glob(f"{post.shortcode}*.json"):
+                    json_file.unlink(missing_ok=True)
+
+            for kf_idx, kf_path in enumerate(keyframes):
+                metadata.append({
+                    **base_meta,
+                    "filename":       str(kf_path),
+                    "media_type":     "keyframe",
+                    "frame_index":    kf_idx,
+                    "video_shortcode": post.shortcode,
+                })
+                count += 1
+
+    def _download_and_process_images(post, base_meta):
+        nonlocal count
+        # Image post (or video with keyframes disabled — fall back to image)
+        nodes = list(post.get_sidecar_nodes()) if post.typename == "GraphSidecar" else [post]
+
+        for idx, node in enumerate(nodes):
+            filename = f"{post.shortcode}_{idx}.jpg"
+            filepath = out_dir / filename
+                    
+            if is_valid_image(filepath):
+                log.debug(f"   ⏭️  Skip (exists & valid): {filename}")
+            else:
+                # Remove corrupt file if it exists
+                if filepath.exists():
+                    log.warning(f"   🗑️  Removing invalid file: {filename}")
+                    filepath.unlink()
+                        
+                # Download new
+                try:
+                    node_url = getattr(node, 'display_url', getattr(node, 'url', None))
+                    # download_pic uses path WITHOUT extension
+                    filepath_no_ext = out_dir / f"{post.shortcode}_{idx}"
+                    L.download_pic(str(filepath_no_ext), node_url, post.date_utc)
+                            
+                    if not filepath.exists():
+                        log.warning(f"   ⚠️  File not created after download: {filename}")
+                        continue
+                            
+                    if not is_valid_image(filepath):
+                        log.warning(f"   ⚠️  Downloaded file is invalid: {filename}")
+                        filepath.unlink(missing_ok=True)
+                        continue
+                            
+                    log.info(f"   ✅ {filename}")
+                            
+                except Exception as e:
+                    log.warning(f"   ⚠️  Failed {filename}: {e}")
+                    continue
+
+            # Add to metadata only if valid
+            if filepath.exists() and is_valid_image(filepath):
+                metadata.append({
+                    **base_meta,
+                    "filename":   str(filepath),
+                    "media_type": "image",
+                    "frame_index": None,
+                    "video_shortcode": None,
+                })
+                count += 1
+
     try:
         profile = instaloader.Profile.from_username(L.context, username)
         log.info(f"   Found: {profile.full_name} | {profile.mediacount} posts")
 
-        # Build post iterator based on scrape_mode (Phase 2.1)
         if scrape_mode == "posts":
             posts_iter = profile.get_posts()
+            log.info(f"   Scraping {profile.mediacount} posts")
         elif scrape_mode == "tagged":
             posts_iter = profile.get_tagged_posts()
+            log.info(f"   Scraping tagged posts")
         elif scrape_mode == "both":
             posts_iter = itertools.chain(profile.get_posts(), profile.get_tagged_posts())
+            log.info(f"   Scraping posts and tagged posts")
         else:
             log.warning(f"Unknown scrape_mode: {scrape_mode}, defaulting to 'posts'")
             posts_iter = profile.get_posts()
@@ -246,8 +370,12 @@ def scrape_account(username, source_type, source_key,
             if count >= limit:
                 break
 
+            if post.shortcode in already_scraped:
+                log.debug(f"   ⏭️  Already scraped: {post.shortcode}")
+                skipped += 1
+                continue
+
             caption = (post.caption or "").lower()
-            is_relevant = any(kw in caption for kw in BETA_KEYWORDS)
             base_meta = {
                 "source_type": source_type,
                 "source_key":  source_key,
@@ -259,75 +387,15 @@ def scrape_account(username, source_type, source_key,
                 "caption":     post.caption or "",
                 "date":        post.date_utc.isoformat(),
                 "likes":       post.likes,
-                "is_relevant": is_relevant,
+                "is_relevant": any(kw in caption for kw in BETA_KEYWORDS),
                 "scrape_mode": scrape_mode,
                 "tagger_username": post.owner_username if scrape_mode in ("tagged", "both") else None,
             }
 
-            is_video = post.is_video
-
-            if is_video and kf_enabled:
-                # Download video then extract keyframes
-                video_path = out_dir / f"{post.shortcode}_0.mp4"
-                if not video_path.exists():
-                    try:
-                        L.download_post(post, target=str(out_dir))
-                        # instaloader saves as {shortcode}.mp4 — find it
-                        mp4_files = list(out_dir.glob(f"{post.shortcode}*.mp4"))
-                        if mp4_files:
-                            video_path = mp4_files[0]
-                    except Exception as e:
-                        log.warning(f"   ⚠️  Video download failed {post.shortcode}: {e}")
-                        time.sleep(delay)
-                        continue
-
-                if video_path.exists():
-                    keyframes = extract_keyframes(video_path, kf_n_frames, kf_skip_pct)
-                    if kf_delete_video:
-                        video_path.unlink(missing_ok=True)
-                        # Clean up instaloader's metadata JSON files (don't store them)
-                        json_files = list(out_dir.glob(f"{post.shortcode}*.json"))
-                        for json_file in json_files:
-                            json_file.unlink(missing_ok=True)
-
-                    for kf_idx, kf_path in enumerate(keyframes):
-                        metadata.append({
-                            **base_meta,
-                            "filename":       str(kf_path),
-                            "media_type":     "keyframe",
-                            "frame_index":    kf_idx,
-                            "video_shortcode": post.shortcode,
-                        })
-                        count += 1
+            if post.is_video and kf_enabled:
+                _download_and_process_video(post, base_meta)
             else:
-                # Image post (or video with keyframes disabled — fall back to image)
-                nodes = list(post.get_sidecar_nodes()) if post.typename == "GraphSidecar" else [post]
-
-                for idx, node in enumerate(nodes):
-                    filename = f"{post.shortcode}_{idx}.jpg"
-                    filepath = out_dir / filename
-                    # download_pic expects path WITHOUT extension (it adds .jpg automatically)
-                    filepath_no_ext = out_dir / f"{post.shortcode}_{idx}"
-
-                    if not filepath.exists():
-                        try:
-                            node_url = getattr(node, 'display_url', getattr(node, 'url', None))
-                            L.download_pic(str(filepath_no_ext), node_url, post.date_utc)
-                            log.info(f"   ✅ {filename}")
-                        except Exception as e:
-                            log.warning(f"   ⚠️  Failed {filename}: {e}")
-                            continue
-                    else:
-                        log.debug(f"   Skip (exists): {filename}")
-
-                    metadata.append({
-                        **base_meta,
-                        "filename":   str(filepath),
-                        "media_type": "image",
-                        "frame_index": None,
-                        "video_shortcode": None,
-                    })
-                    count += 1
+                _download_and_process_images(post, base_meta)
 
             time.sleep(delay)
 
@@ -338,7 +406,7 @@ def scrape_account(username, source_type, source_key,
     except Exception as e:
         log.error(f"❌ Error scraping @{username}: {e}")
 
-    log.info(f"   Done: {count} images from @{username}")
+    log.info(f"   Done: {count} new images, {skipped} posts already scraped (skipped) from @{username}")
     return metadata
 
 
@@ -493,6 +561,12 @@ def main():
     new_this_run = []
     scrape_modes = cfg.get("scraping", {}).get("scrape_modes", {})
 
+    # Build per-account set of already-scraped shortcodes from the index
+    scraped_by_account: dict[str, set] = {}
+    for m in all_metadata:
+        uname = m.get("username", "")
+        scraped_by_account.setdefault(uname, set()).add(m["shortcode"])
+
     for username, source_type, source_key, gym_tags in tasks:
         # Determine scrape mode (Phase 2.1)
         if args.mode:
@@ -509,12 +583,15 @@ def main():
             username, source_type, source_key,
             limit=args.limit, delay=args.delay, loader=loader,
             scrape_mode=mode, gym_tags=gym_tags,
+            scraped_shortcodes=scraped_by_account.get(username, set()),
         )
         for m in new_meta:
             if m["filename"] not in existing_files:
                 all_metadata.append(m)
                 existing_files.add(m["filename"])
                 new_this_run.append(m)
+                # Keep per-account set in sync so later tasks see the update
+                scraped_by_account.setdefault(m.get("username", ""), set()).add(m["shortcode"])
 
     save_index(all_metadata)
 
