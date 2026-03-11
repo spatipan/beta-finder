@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Nunito', system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-chalk text-stone-800 antialiased;
+    min-height: 100dvh;
+  }
+
+  .dark body {
+    @apply bg-surface-dark text-stone-100;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary text-white font-semibold rounded-2xl px-6 py-3
+           transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed
+           hover:bg-primary-600 focus-visible:outline-2 focus-visible:outline-primary;
+  }
+
+  .gym-pill {
+    @apply rounded-full px-3 py-1.5 text-sm font-semibold
+           transition-all cursor-pointer border-2 border-transparent
+           active:scale-95;
+  }
+
+  .card {
+    @apply bg-white dark:bg-stone-900 rounded-2xl shadow-sm overflow-hidden;
+  }
+
+  .tab-item {
+    @apply flex-1 flex flex-col items-center gap-0.5 py-2 text-xs font-semibold
+           text-stone-400 dark:text-stone-500 transition-colors cursor-pointer;
+  }
+
+  .tab-item.active {
+    @apply text-primary;
+  }
+}
+
+/* Flipbook animation */
+@keyframes flipbook {
+  0%, 24% { opacity: 1; }
+  25%, 49% { opacity: 0; }
+  50%, 74% { opacity: 0; }
+  75%, 100% { opacity: 0; }
+}
+
+.flipbook-frame:nth-child(1) { animation: flipbook 2s steps(1) infinite 0s; }
+.flipbook-frame:nth-child(2) { animation: flipbook 2s steps(1) infinite 0.5s; }
+.flipbook-frame:nth-child(3) { animation: flipbook 2s steps(1) infinite 1s; }
+.flipbook-frame:nth-child(4) { animation: flipbook 2s steps(1) infinite 1.5s; }
+
+.flipbook-frame {
+  @apply absolute inset-0 w-full h-full object-cover opacity-0;
+}
+.flipbook-frame:first-child {
+  @apply opacity-100;
+}

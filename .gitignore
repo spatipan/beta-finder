@@ -1,44 +1,12 @@
-# Python Cache
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-env/
 venv/
+__pycache__/
 .env
-
-# Data and Models
-data/images/
-data/*.pkl
-data/*.json
-data/*.index
-*.pkl
-*.index
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Test images
-test.jpg
-test.jpeg
-test.png
-
-# Build & Dependencies
-dist/
-build/
-*.egg-info/
-node_modules/
-.vite/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Claude
 .claude/
+_legacy/
 
-# notebook
-notebook/
+data/
+*.env
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/

@@ -1,0 +1,71 @@
+# BetaFinder CNX — central configuration (PRD §2.3)
+
+ml:
+  wall_filter_threshold: 0.15   # CLIP score; lower = more permissive (0.272 was original PRD default)
+  thumb_width: 400               # px
+  thumb_height: 711              # px (9:16 portrait)
+  top_k_default: 5               # default search results returned
+  scrape_delay_sec: 2.0          # delay between Instagram requests
+
+# BetaFinder CNX — gym account configuration
+# TODO: add region/country for each gym to enable geo-filtering
+
+gyms:
+  - id: alpine
+    ig_handle: the_alpine_outpost
+    max_posts: 100
+    gym_hints:
+      handles: [the_alpine_outpost, alpineoutpost]
+      hashtags: [alpine, alpineoutpost, thealpineoutpost]
+
+  - id: mainwall
+    ig_handle: mainwallcnx
+    max_posts: 100
+    gym_hints:
+      handles: [mainwallcnx, mainwall]
+      hashtags: [mainwall, mainwallcnx, mainwallchiangmai]
+
+  - id: progression
+    ig_handle: progressionvertical
+    max_posts: 100
+    gym_hints:
+      handles: [progressionvertical, progression]
+      hashtags: [progression, progressionvertical, progressionchiangmai]
+
+tagged_scraping:
+  # Scrapes the "tagged" feed of each gym's IG account — posts by climbers
+  # who tagged the gym. Requires a valid logged-in session (CLI session from
+  # `instaloader --load-cookies safari --login climb.with.poom`).
+  enabled: true
+  sources:
+    - gym_id: alpine
+      tagged_account: the_alpine_outpost
+    - gym_id: mainwall
+      tagged_account: mainwallcnx
+    - gym_id: progression
+      tagged_account: progressionvertical
+  max_tagged_posts: 200
+
+contributor_scraping:
+  # Scrapes personal contributor accounts directly. Posts are auto-assigned
+  # to a gym based on caption hashtags / @mentions (gym_hints above).
+  # default_gym is used when no gym can be detected from the caption.
+  enabled: true
+  accounts:
+    - ig_handle: climb.with.poom
+      # default_gym:    # fallback if no gym detected from caption
+      max_posts: 5
+    - ig_handle: jokerawee
+      max_posts: 50
+    - ig_handle: ninewclimbing__project
+      max_posts: 50
+    - ig_handle: pobnewbie_climbs
+      max_posts: 50
+    - ig_handle: climbing.bgn
+      max_posts: 100
+    - ig_handle: ruairidhm_
+      max_posts: 50
+  # Add more contributors:
+  # - ig_handle: someother_climber
+  #   default_gym: mainwall
+  #   max_posts: 30
