@@ -9,7 +9,7 @@ import logging
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from scripts.indexer.build_index import load_accounts, index_gym
+from scripts.indexer.build_index import load_accounts, index_gym, index_contributors
 from ml.embedder.dino import DinoEmbedder
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -22,14 +22,19 @@ scheduler = BlockingScheduler()
 def scheduled_scrape() -> None:
     log.info("Scheduled scrape started")
     config = load_accounts()
+    ml_cfg = config.get("ml", {})
     embedder = DinoEmbedder()
     total = 0
     for gym in config["gyms"]:
         try:
-            n = index_gym(gym["id"], embedder, config)
+            n = index_gym(gym["id"], embedder, config, ml_cfg)
             total += n
         except Exception as e:
             log.error(f"Error indexing {gym['id']}: {e}")
+    try:
+        total += index_contributors(embedder, config, ml_cfg)
+    except Exception as e:
+        log.error(f"Error indexing contributors: {e}")
     log.info(f"Scheduled scrape done. {total} new Reels indexed.")
 
 
