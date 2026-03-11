@@ -24,20 +24,23 @@ from chromadb.config import Settings
 COLLECTION_NAME = "betafinder_reels"
 PERSIST_DIR = str(Path("data/vectordb"))
 
-
-def _client() -> chromadb.ClientAPI:
-    return chromadb.PersistentClient(
-        path=PERSIST_DIR,
-        settings=Settings(anonymized_telemetry=False),
-    )
+# Module-level singleton — avoids re-opening the SQLite backing store and
+# re-loading the HNSW index on every store operation (add_reel, get_all_ids, etc.)
+_collection: "chromadb.Collection | None" = None
 
 
 def get_collection() -> chromadb.Collection:
-    client = _client()
-    return client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
-    )
+    global _collection
+    if _collection is None:
+        client = chromadb.PersistentClient(
+            path=PERSIST_DIR,
+            settings=Settings(anonymized_telemetry=False),
+        )
+        _collection = client.get_or_create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+    return _collection
 
 
 # Priority order: lower number = higher priority
@@ -73,16 +76,19 @@ def add_reel(
       no existing entry            →  upsert (first write)
     """
     collection = get_collection()
+    new_priority = SOURCE_PRIORITY.get(source_type, 99)
 
-    existing = collection.get(ids=[reel_id], include=["metadatas"])
-    if existing["ids"]:
-        existing_meta = existing["metadatas"][0]
-        cur_priority = SOURCE_PRIORITY.get(
-            existing_meta.get("source_type", "contributor"), 99
-        )
-        new_priority = SOURCE_PRIORITY.get(source_type, 99)
-        if new_priority >= cur_priority:
-            return  # keep the existing entry unchanged
+    # Official posts (priority 0) always win — skip the read-before-write for
+    # the highest-volume scrape path.  All other sources check for an existing
+    # higher-priority entry before deciding whether to upsert.
+    if new_priority > 0:
+        existing = collection.get(ids=[reel_id], include=["metadatas"])
+        if existing["ids"]:
+            cur_priority = SOURCE_PRIORITY.get(
+                existing["metadatas"][0].get("source_type", "contributor"), 99
+            )
+            if new_priority >= cur_priority:
+                return  # keep the existing higher-priority entry unchanged
 
     collection.upsert(
         ids=[reel_id],
@@ -110,10 +116,14 @@ def get_all_ids(gym: str | None = None) -> set[str]:
 
 
 def count(gym: str | None = None) -> int:
-    collection = get_collection()
+    """Return total number of indexed Reels, optionally filtered by gym.
+
+    Note: ChromaDB's collection.count() does not support a `where` filter, so
+    per-gym counts are computed via get_all_ids() which does support `where`.
+    """
     if gym:
-        return collection.count()  # ChromaDB count() doesn't support where yet
-    return collection.count()
+        return len(get_all_ids(gym=gym))
+    return get_collection().count()
 
 
 def stats() -> dict:

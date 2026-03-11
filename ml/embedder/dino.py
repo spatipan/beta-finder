@@ -24,11 +24,26 @@ class DinoEmbedder:
         return outputs.last_hidden_state[:, 0, :]  # CLS token
 
     def embed_frames(self, frames: list[Image.Image]) -> torch.Tensor:
-        """Embed multiple frames and average → 1×768 tensor per Reel."""
+        """Batch-embed multiple frames and average → 1×768 tensor per Reel.
+
+        Uses a single processor + model forward pass for all frames instead of
+        calling embed() per frame. Functionally identical output, but avoids
+        N separate forward passes (minor benefit on CPU, larger on GPU).
+
+        Args:
+            frames: List of PIL Images (e.g. top-4 keyframes for a Reel).
+
+        Returns:
+            1×768 tensor — mean CLS token across all frames.
+        """
         if not frames:
             raise ValueError("frames list is empty")
-        embeddings = [self.embed(f) for f in frames]
-        return torch.stack(embeddings).mean(dim=0)
+        inputs = self.processor(images=frames, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        cls_tokens = outputs.last_hidden_state[:, 0, :]  # (N, 768)
+        return cls_tokens.mean(dim=0, keepdim=True)       # (1, 768)
 
     def embed_numpy(self, frame_bgr: "np.ndarray") -> torch.Tensor:
         """Convenience: embed a BGR numpy array directly."""

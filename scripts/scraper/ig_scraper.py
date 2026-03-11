@@ -13,20 +13,70 @@ for tagged post scraping, then parsing the downloaded files.
 from __future__ import annotations
 
 import json
+import logging
 import lzma
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import instaloader
+from tqdm import tqdm
 
 RAW_DIR = Path("data/raw")
 SCRAPE_DELAY = float(os.getenv("SCRAPING_DELAY", "2.0"))
+
+# Sidecar filename written alongside each downloaded .mp4.
+# Contains full post metadata so crash-recovery doesn't need to re-hit the IG API.
+SIDECAR_NAME = ".reel.json"
+
+log = logging.getLogger(__name__)
+
+# ── Logging helpers (tqdm-safe) ───────────────────────────────────────────────
+
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+def _log(tag: str, msg: str) -> None:
+    tqdm.write(f"{_ts()}  {tag:<12} {msg}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+def read_sidecar(raw_dir: Path) -> dict | None:
+    """Read the .reel.json sidecar from a raw dir, if it exists.
+
+    Returns the metadata dict (shortcode, account, caption, posted_at, gym_id,
+    source, ig_url) or None if missing or corrupt.
+    """
+    sidecar = raw_dir / SIDECAR_NAME
+    if not sidecar.exists():
+        return None
+    try:
+        return json.loads(sidecar.read_text())
+    except Exception:
+        return None
+
+
+def _write_sidecar(raw_dir: Path, reel: "Reel") -> None:
+    """Write metadata to .reel.json alongside the downloaded .mp4.
+
+    Called immediately after a successful download so the metadata survives
+    a crash and can be used by sweep_raw_dir() without re-hitting the IG API.
+    """
+    sidecar = raw_dir / SIDECAR_NAME
+    sidecar.write_text(json.dumps({
+        "shortcode": reel.shortcode,
+        "account": reel.account,
+        "caption": reel.caption,
+        "posted_at": reel.posted_at,
+        "gym_id": reel.gym_id,
+        "source": reel.source,
+        "ig_url": reel.ig_url,
+    }))
 
 
 def detect_gym_from_caption(
@@ -85,7 +135,7 @@ class Reel:
     posted_at: str
     account: str
     gym_id: str
-    source: str  # official | tagged
+    source: str  # official | tagged | contributor
 
 
 def _loader() -> instaloader.Instaloader:
@@ -109,7 +159,7 @@ def _loader() -> instaloader.Instaloader:
     if user:
         try:
             loader.load_session_from_file(user)
-            print(f"[scraper] Loaded CLI session for @{user}")
+            _log("[session]", f"Loaded CLI session for @{user}")
             return loader
         except Exception:
             pass  # no saved session — fall through
@@ -120,18 +170,22 @@ def _loader() -> instaloader.Instaloader:
     if user and session_file:
         try:
             loader.load_session_from_file(user, session_file)
-            print(f"[scraper] Loaded pickle session for @{user}")
+            _log("[session]", f"Loaded pickle session for @{user}")
             return loader
         except Exception as e:
-            print(f"[scraper] Session file load failed ({session_file}): {e}")
+            _log("[session]", f"Session file load failed ({session_file}): {e}")
 
     # 3. Fall back to username/password (likely 401 on modern Instagram).
     pwd = os.getenv("INSTALOADER_PASS")
     if user and pwd:
         try:
             loader.login(user, pwd)
+            _log("[session]", f"Password login succeeded for @{user}")
         except Exception as e:
-            print(f"[scraper] Password login failed: {e}")
+            _log("[session]", f"Password login failed for @{user}: {e}")
+
+    if not user:
+        _log("[session]", "No INSTALOADER_USER set — scraping anonymously (rate limits apply)")
 
     return loader
 
@@ -166,20 +220,29 @@ def scrape_new_reels(
     try:
         profile = instaloader.Profile.from_username(loader.context, ig_handle)
     except Exception as e:
-        print(f"[scraper] Could not load profile @{ig_handle}: {e}")
+        _log("[scraper]", f"Could not load profile @{ig_handle}: {e}")
         return []
+
+    _log("[scraper]", f"@{ig_handle}: {profile.mediacount} total post(s) on profile")
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     reels: list[Reel] = []
     _default = default_gym or gym_id
+    skipped_non_video = 0
+    skipped_existing = 0
+    resumed = 0
 
     try:
         for post in profile.get_posts():
             if len(reels) >= max_posts:
+                _log("[scraper]", f"@{ig_handle}: reached max_posts={max_posts}, stopping")
                 break
             if post.shortcode in existing_ids:
-                break  # stop early — older posts already indexed
+                skipped_existing += 1
+                _log("[scraper]", f"@{ig_handle}: hit existing shortcode {post.shortcode} — stopping early")
+                break
             if not post.is_video:
+                skipped_non_video += 1
                 continue
 
             # Detect gym per-post when scraping contributor accounts
@@ -187,20 +250,54 @@ def scrape_new_reels(
                 assigned_gym = detect_gym_from_caption(
                     post.caption or "", gym_hints, _default
                 )
+                if assigned_gym != _default:
+                    _log("[scraper]", f"  {post.shortcode}: gym detected from caption → {assigned_gym}")
             else:
                 assigned_gym = gym_id
 
+            # Resume: if raw dir + sidecar already exist, the .mp4 was downloaded
+            # in a previous (crashed) run — reuse it without re-downloading.
+            raw_dir = RAW_DIR / post.shortcode
+            sidecar = read_sidecar(raw_dir)
+            mp4_exists = bool(next(raw_dir.glob("*.mp4"), None)) if raw_dir.exists() else False
+            if sidecar and mp4_exists:
+                mp4 = next(raw_dir.glob("*.mp4"))
+                reels.append(Reel(
+                    shortcode=post.shortcode,
+                    video_path=str(mp4),
+                    ig_url=sidecar["ig_url"],
+                    caption=sidecar["caption"],
+                    posted_at=sidecar["posted_at"],
+                    account=sidecar["account"],
+                    gym_id=sidecar.get("gym_id", assigned_gym),
+                    source=sidecar.get("source", source),
+                ))
+                resumed += 1
+                _log("[scraper]", f"  {post.shortcode}: resumed from previous run (skipping re-download)")
+                continue
+
             try:
+                _log("[scraper]", f"  Downloading {post.shortcode}  ({post.date_utc.date()})  @{post.owner_username} …")
+                t0 = time.monotonic()
                 reel = _download_reel(loader, post, gym_id=assigned_gym, source=source)
                 if reel:
+                    _write_sidecar(RAW_DIR / post.shortcode, reel)
                     reels.append(reel)
+                    _log("[scraper]", f"  {post.shortcode}: downloaded  ({time.monotonic()-t0:.1f}s)")
+                else:
+                    _log("[scraper]", f"  {post.shortcode}: no .mp4 found after download")
             except Exception as e:
-                print(f"[scraper] Skip {post.shortcode}: {e}")
+                _log("[scraper]", f"  {post.shortcode}: download failed — {e}")
 
             time.sleep(SCRAPE_DELAY)
     except Exception as e:
-        print(f"[scraper] Official posts iteration stopped for @{ig_handle}: {e}")
+        _log("[scraper]", f"@{ig_handle}: post iteration stopped — {e}")
 
+    _log("[scraper]", (
+        f"@{ig_handle}: {len(reels)} reel(s) ready"
+        + (f"  ({resumed} resumed, {len(reels)-resumed} freshly downloaded)" if resumed else "")
+        + f"  (skipped {skipped_non_video} non-video, {skipped_existing} already indexed)"
+    ))
     return reels
 
 
@@ -218,132 +315,201 @@ def scrape_tagged_reels(
     """
     user = os.getenv("INSTALOADER_USER")
     if not user:
-        print("[scraper] INSTALOADER_USER not set — skipping tagged scraping")
+        _log("[scraper]", "INSTALOADER_USER not set — skipping tagged scraping")
         return []
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     reels: list[Reel] = []
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        session_file = os.path.expanduser(f"~/.config/instaloader/session-{user}")
-        tagged_dir = Path(tmpdir) / tagged_account / ":tagged"
-        cmd = [
-            _CLI_BIN,
-            "--login", user,
-            "--sessionfile", session_file,
-            "--no-posts",          # skip official posts
-            "--tagged",            # only tagged posts
-            "--no-profile-pic",
-            "--no-captions",       # skip .txt files
-            "--no-compress-json",  # plain JSON for easy parsing
-            tagged_account,
-        ]
-        print(f"[scraper] CLI tagged: {' '.join(cmd)}")
+    # Use a persistent staging dir so downloads survive a Ctrl+C interrupt.
+    # The CLI writes files here; we move .mp4s to data/raw/ after parsing.
+    # The dir is cleaned up only after successful parsing, not on interrupt.
+    stage_root = RAW_DIR / "_tagged_stage"
+    stage_root.mkdir(parents=True, exist_ok=True)
+    tagged_dir = stage_root / tagged_account / ":tagged"
 
-        # --count does not apply to --tagged (only works for hashtag/feed/saved).
-        # We use Popen + polling: kill the process once we have enough .mp4 files.
-        proc = subprocess.Popen(
-            cmd,
-            cwd=tmpdir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        deadline = time.time() + 600  # 10 min absolute ceiling
-        while proc.poll() is None and time.time() < deadline:
-            time.sleep(2)
-            mp4_count = len(list(tagged_dir.glob("*.mp4"))) if tagged_dir.exists() else 0
-            if mp4_count >= max_posts:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                break
-        else:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+    session_file = os.path.expanduser(f"~/.config/instaloader/session-{user}")
+    cmd = [
+        _CLI_BIN,
+        "--login", user,
+        "--sessionfile", session_file,
+        "--no-posts",          # skip official posts
+        "--tagged",            # only tagged posts
+        "--no-profile-pic",
+        "--no-captions",       # skip .txt files
+        "--no-compress-json",  # plain JSON for easy parsing
+        tagged_account,
+    ]
+    _log("[scraper]", f"CLI tagged: {_CLI_BIN} --tagged @{tagged_account} (max={max_posts})")
+    _log("[scraper]", f"  Stage dir: {stage_root / tagged_account}")
 
-        if not tagged_dir.exists():
-            print(f"[scraper] No tagged dir found — CLI may have failed for @{tagged_account}")
-            return []
+    existing_mp4s = len(list(tagged_dir.glob("*.mp4"))) if tagged_dir.exists() else 0
+    if existing_mp4s:
+        _log("[scraper]", f"  Resuming — {existing_mp4s} .mp4 file(s) already staged from previous run")
 
-        # Collect (timestamp, shortcode, json_path, mp4_path) tuples
-        entries: list[tuple[int, str, Path, Path | None]] = []
-        for json_file in tagged_dir.glob("*.json"):
+    t0 = time.monotonic()
+    # --count does not apply to --tagged (only works for hashtag/feed/saved).
+    # We use Popen + polling: kill the process once we have enough .mp4 files.
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(stage_root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.time() + 600  # 10 min absolute ceiling
+    last_count = existing_mp4s
+    while proc.poll() is None and time.time() < deadline:
+        time.sleep(2)
+        mp4_count = len(list(tagged_dir.glob("*.mp4"))) if tagged_dir.exists() else 0
+        if mp4_count != last_count:
+            _log("[scraper]", f"  @{tagged_account}: {mp4_count} .mp4 file(s) staged …")
+            last_count = mp4_count
+        if mp4_count >= max_posts:
+            proc.terminate()
             try:
-                data = json.loads(json_file.read_text())
-                node = data.get("node", data)
-                shortcode = node.get("shortcode", "")
-                is_video = node.get("is_video", False)
-                ts = node.get("taken_at_timestamp", 0)
-                owner = node.get("owner", {}).get("username", tagged_account)
-                caption_edges = node.get("edge_media_to_caption", {}).get("edges", [])
-                caption = caption_edges[0]["node"]["text"] if caption_edges else ""
-
-                if not shortcode or not is_video:
-                    continue
-                if shortcode in existing_ids:
-                    continue
-
-                mp4 = json_file.with_suffix(".mp4")
-                entries.append((ts, shortcode, json_file, mp4 if mp4.exists() else None))
-            except Exception as e:
-                print(f"[scraper] Could not parse {json_file.name}: {e}")
-
-        # Also handle .json.xz (in case --no-compress-json didn't apply)
-        for json_file in tagged_dir.glob("*.json.xz"):
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            _log("[scraper]", f"  @{tagged_account}: reached max_posts={max_posts}, CLI terminated")
+            break
+    else:
+        if proc.poll() is None:
+            proc.terminate()
             try:
-                with lzma.open(json_file) as f:
-                    data = json.load(f)
-                node = data.get("node", data)
-                shortcode = node.get("shortcode", "")
-                is_video = node.get("is_video", False)
-                ts = node.get("taken_at_timestamp", 0)
-                caption_edges = node.get("edge_media_to_caption", {}).get("edges", [])
-                caption = caption_edges[0]["node"]["text"] if caption_edges else ""
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
-                if not shortcode or not is_video:
-                    continue
-                if shortcode in existing_ids:
-                    continue
+    cli_elapsed = time.monotonic() - t0
+    rc = proc.returncode
+    _log("[scraper]", f"  @{tagged_account}: CLI finished  rc={rc}  ({cli_elapsed:.1f}s)")
 
-                mp4 = tagged_dir / f"{json_file.stem.replace('.json', '')}.mp4"
-                entries.append((ts, shortcode, json_file, mp4 if mp4.exists() else None))
-            except Exception as e:
-                print(f"[scraper] Could not parse {json_file.name}: {e}")
+    if not tagged_dir.exists():
+        _log("[scraper]", f"  @{tagged_account}: tagged dir not found — CLI likely failed")
+        return []
 
-        # Sort by newest first, cap at max_posts
-        entries.sort(key=lambda x: x[0], reverse=True)
-        entries = entries[:max_posts]
+    # Collect (timestamp, shortcode, json_path, mp4_path) tuples
+    entries: list[tuple[int, str, Path, Path | None]] = []
+    skipped_existing = 0
+    skipped_non_video = 0
+    parse_errors = 0
 
-        for ts, shortcode, json_file, mp4_tmp in entries:
-            if not mp4_tmp:
-                print(f"  [skip] {shortcode}: no .mp4 downloaded")
+    for json_file in tagged_dir.glob("*.json"):
+        try:
+            data = json.loads(json_file.read_text())
+            node = data.get("node", data)
+            shortcode = node.get("shortcode", "")
+            is_video = node.get("is_video", False)
+            ts = node.get("taken_at_timestamp", 0)
+            caption_edges = node.get("edge_media_to_caption", {}).get("edges", [])
+            caption = caption_edges[0]["node"]["text"] if caption_edges else ""
+
+            if not shortcode or not is_video:
+                skipped_non_video += 1
+                continue
+            if shortcode in existing_ids:
+                skipped_existing += 1
                 continue
 
-            # Move mp4 into RAW_DIR/{shortcode}/
-            dest_dir = RAW_DIR / shortcode
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_mp4 = dest_dir / f"{shortcode}.mp4"
-            shutil.copy2(mp4_tmp, dest_mp4)
+            mp4 = json_file.with_suffix(".mp4")
+            entries.append((ts, shortcode, json_file, mp4 if mp4.exists() else None))
+        except Exception as e:
+            parse_errors += 1
+            _log("[scraper]", f"  Could not parse {json_file.name}: {e}")
 
-            posted_at = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat() if ts else ""
-            reels.append(Reel(
-                shortcode=shortcode,
-                video_path=str(dest_mp4),
-                ig_url=f"https://www.instagram.com/reel/{shortcode}",
-                caption=caption,
-                posted_at=posted_at,
-                account=tagged_account,
-                gym_id=gym_id,
-                source="tagged",
-            ))
+    # Also handle .json.xz (in case --no-compress-json didn't apply)
+    for json_file in tagged_dir.glob("*.json.xz"):
+        try:
+            with lzma.open(json_file) as f:
+                data = json.load(f)
+            node = data.get("node", data)
+            shortcode = node.get("shortcode", "")
+            is_video = node.get("is_video", False)
+            ts = node.get("taken_at_timestamp", 0)
+            caption_edges = node.get("edge_media_to_caption", {}).get("edges", [])
+            caption = caption_edges[0]["node"]["text"] if caption_edges else ""
+
+            if not shortcode or not is_video:
+                skipped_non_video += 1
+                continue
+            if shortcode in existing_ids:
+                skipped_existing += 1
+                continue
+
+            mp4 = tagged_dir / f"{json_file.stem.replace('.json', '')}.mp4"
+            entries.append((ts, shortcode, json_file, mp4 if mp4.exists() else None))
+        except Exception as e:
+            parse_errors += 1
+            _log("[scraper]", f"  Could not parse {json_file.name}: {e}")
+
+    _log("[scraper]", (
+        f"  @{tagged_account}: parsed {len(entries)} valid video(s)  "
+        f"(skipped {skipped_non_video} non-video, {skipped_existing} already indexed"
+        + (f", {parse_errors} parse error(s)" if parse_errors else "") + ")"
+    ))
+
+    # Sort by newest first, cap at max_posts
+    entries.sort(key=lambda x: x[0], reverse=True)
+    entries = entries[:max_posts]
+
+    no_mp4 = 0
+    for ts, shortcode, json_file, mp4_tmp in entries:
+        if not mp4_tmp:
+            no_mp4 += 1
+            _log("[scraper]", f"  {shortcode}: no .mp4 — skipping")
+            continue
+
+        # Move .mp4 from stage into data/raw/{shortcode}/ (no copy — same filesystem)
+        dest_dir = RAW_DIR / shortcode
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_mp4 = dest_dir / f"{shortcode}.mp4"
+        shutil.move(str(mp4_tmp), dest_mp4)
+
+        posted_at = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat() if ts else ""
+        reel = Reel(
+            shortcode=shortcode,
+            video_path=str(dest_mp4),
+            ig_url=f"https://www.instagram.com/reel/{shortcode}",
+            caption=caption,
+            posted_at=posted_at,
+            account=tagged_account,
+            gym_id=gym_id,
+            source="tagged",
+        )
+        _write_sidecar(dest_dir, reel)
+        reels.append(reel)
+
+    if no_mp4:
+        _log("[scraper]", f"  @{tagged_account}: {no_mp4} entry/entries had no .mp4")
+    _log("[scraper]", f"  @{tagged_account}: {len(reels)} reel(s) ready for indexing")
+
+    # Clean up the stage dir now that all .mp4s have been moved out
+    shutil.rmtree(stage_root / tagged_account, ignore_errors=True)
+    _log("[scraper]", f"  Stage cleaned up: {stage_root / tagged_account}")
 
     return reels
+
+
+def fetch_post_meta(shortcode: str) -> dict | None:
+    """Fetch metadata for a single post by shortcode without downloading the video.
+
+    Used by sweep_raw_dir() to recover the real account name, caption, and
+    posted_at for orphaned .mp4 files instead of defaulting to "unknown".
+
+    Returns a dict with keys: account, caption, posted_at (ISO date string).
+    Returns None if the post cannot be fetched (private, deleted, rate-limited).
+    """
+    loader = _loader()
+    try:
+        post = instaloader.Post.from_shortcode(loader.context, shortcode)
+        return {
+            "account": post.owner_username,
+            "caption": post.caption or "",
+            "posted_at": post.date_utc.date().isoformat(),
+        }
+    except Exception as e:
+        _log("[scraper]", f"fetch_post_meta({shortcode}): {e}")
+        return None
 
 
 def _download_reel(

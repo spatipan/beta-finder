@@ -28,15 +28,19 @@ def tiny_bgr_frame() -> np.ndarray:
 
 @pytest.fixture()
 def tmp_chroma_dir(tmp_path, monkeypatch):
-    """Patch store.PERSIST_DIR to an isolated tmp directory.
+    """Patch store.PERSIST_DIR to an isolated tmp directory per test.
 
-    Also clears the lru_cache on _client so each test gets a fresh client.
+    Also resets the module-level _collection singleton so each test gets a
+    fresh ChromaDB client pointing at the new tmp path.
     """
     import ml.vectordb.store as store_mod
 
-    # Point persist dir at a fresh tmp directory
     monkeypatch.setattr(store_mod, "PERSIST_DIR", str(tmp_path / "chroma"))
+    monkeypatch.setattr(store_mod, "_collection", None)
     yield tmp_path / "chroma"
+    # Reset after the test so the singleton doesn't leak into the next test
+    # (monkeypatch already restores PERSIST_DIR, but we also need _collection gone)
+    store_mod._collection = None
 
 
 # ---------------------------------------------------------------------------

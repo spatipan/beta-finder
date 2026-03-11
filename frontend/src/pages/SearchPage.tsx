@@ -116,7 +116,6 @@ export default function SearchPage({ topK, region, onRegionChange }: Props) {
         <button
           className="btn-primary w-full text-base"
           onClick={handleSearch}
-          disabled={state === 'searching'}
         >
           🔍 Find Beta
         </button>

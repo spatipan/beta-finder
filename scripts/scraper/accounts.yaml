@@ -44,7 +44,7 @@ tagged_scraping:
       tagged_account: mainwallcnx
     - gym_id: progression
       tagged_account: progressionvertical
-  max_tagged_posts: 200
+  max_tagged_posts: 100
 
 contributor_scraping:
   # Scrapes personal contributor accounts directly. Posts are auto-assigned
@@ -54,7 +54,7 @@ contributor_scraping:
   accounts:
     - ig_handle: climb.with.poom
       # default_gym:    # fallback if no gym detected from caption
-      max_posts: 5
+      max_posts: 50
     - ig_handle: jokerawee
       max_posts: 50
     - ig_handle: ninewclimbing__project

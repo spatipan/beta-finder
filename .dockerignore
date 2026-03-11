@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+.venv
+*.egg-info
+.pytest_cache
+
+# Node artifacts
+frontend/node_modules
+frontend/.vite
+frontend/dist
+
+# Data (mounted as Docker volume)
+data/
+
+# Dev / misc
+_legacy/
+patipan_poty/
+*.md
+infra/
+!infra/nginx.conf
+.claude/
+.env
+.env.*

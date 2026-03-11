@@ -44,11 +44,59 @@ def _load() -> None:
         _text_features = _text_features / _text_features.norm(dim=-1, keepdim=True)
 
 
+def filter_wall_frames(
+    frames: "list[np.ndarray | Image.Image]",
+    threshold: float = 0.20,
+) -> list[tuple[bool, float]]:
+    """Batch CLIP wall classifier — one forward pass for all frames.
+
+    Designed for the sparse wall-check stage: preprocess N frames (typically
+    ~11 at 5s intervals), stack into a single (N, C, H, W) tensor, and run
+    one model.encode_image() call instead of N separate calls.
+
+    Args:
+        frames: List of BGR numpy arrays or PIL Images.
+        threshold: Same scoring formula as is_climbing_wall().
+
+    Returns:
+        List of (is_wall, score) tuples in the same order as input frames.
+    """
+    if not frames:
+        return []
+
+    _load()
+    device = next(_model.parameters()).device
+
+    tensors = []
+    for frame in frames:
+        if isinstance(frame, np.ndarray):
+            pil = Image.fromarray(frame[..., ::-1])  # BGR → RGB
+        else:
+            pil = frame
+        tensors.append(_preprocess(pil))
+
+    batch = torch.stack(tensors).to(device)  # (N, C, H, W)
+
+    with torch.no_grad():
+        img_feats = _model.encode_image(batch)                           # (N, D)
+        img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
+        sims = img_feats @ _text_features.T                              # (N, P)
+
+    pos_scores = sims[:, :_N_POS].mean(dim=1)    # (N,)
+    neg_scores = sims[:, _N_POS:].mean(dim=1)    # (N,)
+    finals = pos_scores - 0.5 * neg_scores        # (N,)
+
+    return [(s.item() > threshold, s.item()) for s in finals]
+
+
 def is_climbing_wall(
     frame: "np.ndarray | Image.Image",
     threshold: float = 0.20,
 ) -> tuple[bool, float]:
-    """Classify whether a frame shows a climbing wall.
+    """Classify whether a single frame shows a climbing wall.
+
+    Delegates to filter_wall_frames() to avoid duplicating the preprocessing,
+    encoding, and scoring logic.
 
     Args:
         frame: BGR numpy array (from cv2) or PIL Image.
@@ -59,23 +107,47 @@ def is_climbing_wall(
     Returns:
         (is_wall, final_score) where final_score = pos_mean - 0.5 * neg_mean.
     """
-    _load()
-    device = next(_model.parameters()).device
+    return filter_wall_frames([frame], threshold=threshold)[0]
 
-    if isinstance(frame, np.ndarray):
-        pil = Image.fromarray(frame[..., ::-1])  # BGR → RGB
-    else:
-        pil = frame
 
-    image_input = _preprocess(pil).unsqueeze(0).to(device)
+def find_optimal_threshold(
+    labeled_frames: "list[tuple[np.ndarray | Image.Image, bool]]",
+) -> float:
+    """Find F1-optimal CLIP threshold from labeled frames (PRD §3.2).
 
-    with torch.no_grad():
-        img_feat = _model.encode_image(image_input)
-        img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
-        sims = (img_feat @ _text_features.T)[0]
+    Args:
+        labeled_frames: List of (frame, is_wall) pairs. frame is a BGR ndarray
+                        or PIL Image. Recommended: 200–500 frames from real gym
+                        footage.
 
-    pos_score = sims[:_N_POS].mean()
-    neg_score = sims[_N_POS:].mean()  # fixed: original used len(NEGATIVE_PROMPTS) which sliced from wrong end
-    final = pos_score - 0.5 * neg_score
+    Returns:
+        Optimal threshold that maximises F1 on the provided labels.
 
-    return final.item() > threshold, final.item()
+    Usage:
+        from ml.embedder.wall_filter import find_optimal_threshold
+        from PIL import Image
+        import os
+
+        labeled = []
+        for f in os.listdir("data/labeled/wall"):
+            labeled.append((Image.open(f"data/labeled/wall/{f}"), True))
+        for f in os.listdir("data/labeled/not_wall"):
+            labeled.append((Image.open(f"data/labeled/not_wall/{f}"), False))
+
+        threshold = find_optimal_threshold(labeled)
+        print(f"Optimal threshold: {threshold:.3f}")
+        # Then update: ml.wall_filter_threshold in accounts.yaml
+    """
+    from sklearn.metrics import precision_recall_curve
+
+    frames = [f for f, _ in labeled_frames]
+    labels = [int(is_wall) for _, is_wall in labeled_frames]
+
+    # threshold=-999 ensures every frame passes — we only want the raw score
+    raw_results = filter_wall_frames(frames, threshold=-999)
+    scores = [score for _, score in raw_results]
+
+    precision, recall, thresholds = precision_recall_curve(labels, scores)
+    f1 = 2 * precision * recall / (precision + recall + 1e-8)
+    best_idx = int(f1.argmax())
+    return float(thresholds[best_idx]) if best_idx < len(thresholds) else 0.20

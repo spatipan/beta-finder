@@ -7,13 +7,6 @@ interface Props {
   result: SearchResult
 }
 
-function scoreLabel(score: number): string {
-  if (score >= 0.85) return '🎯 Strong match'
-  if (score >= 0.70) return '✨ Good match'
-  if (score >= 0.55) return '👀 Possible match'
-  return '🔍 Weak match'
-}
-
 function sourceLabel(source: string): string {
   if (source === 'official') return '🏟️ official'
   if (source === 'tagged') return '🏷️ community'
@@ -75,17 +68,24 @@ export default function ResultCard({ result }: Props) {
           <span className="text-xs text-stone-400 dark:text-stone-500">{sourceLabel(result.source_type)}</span>
         </div>
 
-        {/* Username + date */}
-        <p className="text-xs text-stone-500 dark:text-stone-400 font-mono">
-          @{result.username} · {dateStr}
-        </p>
+        {/* Username */}
+        {result.username && result.username !== 'unknown' && (
+          <p className="text-xs text-stone-500 dark:text-stone-400 font-mono">
+            @{result.username}
+          </p>
+        )}
 
         {/* Caption */}
         {caption && (
-          <p className="text-xs text-stone-500 dark:text-stone-400 leading-relaxed line-clamp-2">
+          <p className="text-[11px] font-sans text-stone-500 dark:text-stone-400 leading-relaxed line-clamp-2">
             {caption}
           </p>
         )}
+
+        {/* Date */}
+        <p className="text-[10px] text-stone-400 dark:text-stone-500 font-mono">
+          {dateStr}
+        </p>
       </div>
     </a>
   )

@@ -1,0 +1,50 @@
+# Shared build context is the repo root so Dockerfiles can reference
+# backend/, ml/, scripts/, and frontend/ in one COPY step.
+
+services:
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      target: api
+    restart: unless-stopped
+    env_file: ../.env
+    volumes:
+      - data:/app/data
+    ports:
+      - "8000:8000"      # expose directly for local dev; remove in prod
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── APScheduler (scrape + index every 6h) ────────────────────────────────────
+  scheduler:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      target: scheduler
+    restart: unless-stopped
+    env_file: ../.env
+    volumes:
+      - data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ── Nginx + React frontend ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  data:
+    driver: local
